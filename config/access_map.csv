@@ -1,1 +1,8 @@
-
+ativo,trilho,entidade,jurisdicao,status,criticidade,bucket_sobrevivencia,jurisdicao_valida
+USDT-USD,Exchange Crypto,Binance,Global/Nao especificada,ATIVO,10,TRUE,FALSE
+TLT,Corretora EUA,Interactive Brokers,USA,ATIVO,9,TRUE,TRUE
+GLD,Corretora EUA,Interactive Brokers,USA,ATIVO,8,TRUE,TRUE
+BTC-USD,Exchange Crypto,Binance,Global/Nao especificada,ATIVO,8,FALSE,FALSE
+VOO,Corretora EUA,Interactive Brokers,USA,ATIVO,6,FALSE,TRUE
+BOTZ,Corretora EUA,Interactive Brokers,USA,ATIVO,5,FALSE,TRUE
+INDA,Corretora EUA,Interactive Brokers,USA,ATIVO,5,FALSE,TRUE
