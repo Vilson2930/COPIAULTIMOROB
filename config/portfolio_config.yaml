@@ -1,1 +1,104 @@
+# ==================================================
+# ROBÔ MACRO — PORTFOLIO CONFIG
+# ==================================================
 
+portfolio_name: "SURVIVAL_MACRO_PORTFOLIO"
+
+base_currency: "USD"
+
+# --------------------------------------------------
+# TARGET WEIGHTS
+# --------------------------------------------------
+
+target_weights:
+
+  USDT-USD: 0.25
+  BTC-USD: 0.15
+  GLD: 0.10
+  VOO: 0.20
+  TLT: 0.10
+  BOTZ: 0.08
+  INDA: 0.12
+
+# --------------------------------------------------
+# REBALANCE
+# --------------------------------------------------
+
+rebalance:
+
+  enabled: true
+
+  lower_band: 0.03
+  upper_band: 0.03
+
+  max_turnover: 0.25
+
+# --------------------------------------------------
+# SURVIVAL BUCKET
+# --------------------------------------------------
+
+survival:
+
+  runway_target_months: 24
+
+  minimum_trilhos: 2
+  minimum_entidades: 2
+  minimum_jurisdicoes: 2
+
+# --------------------------------------------------
+# KILL SWITCH
+# --------------------------------------------------
+
+kill_switch:
+
+  enabled: true
+
+  min_survival_score: 60
+
+  block_rebalance_if_survival_fail: true
+
+# --------------------------------------------------
+# GOVERNANCE
+# --------------------------------------------------
+
+governance:
+
+  allow_rebalance_under_disfunction: false
+
+  market_disfunction_rules:
+
+    settlement_days_limit: 5
+
+    block_if_trilho_failure: true
+
+    block_if_capital_control: true
+
+    block_if_regulatory_restriction: true
+
+# --------------------------------------------------
+# GOLD POLICY
+# --------------------------------------------------
+
+gold_policy:
+
+  gold_is_cash: false
+
+  gold_is_survival_bucket: false
+
+  gold_use_allowed_only_for:
+
+    - SYSTEM_FAILURE
+    - MULTI_TRILHO_FAILURE
+    - JURISDICTION_RELOCATION
+
+# --------------------------------------------------
+# OUTPUTS
+# --------------------------------------------------
+
+outputs:
+
+  save_csv: true
+
+  save_audit: true
+
+  save_governance_report: true
