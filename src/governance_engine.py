@@ -17,6 +17,55 @@ def ensure_outputs_dir():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
+def calculate_operational_score(survival_audit):
+    """
+    Operational Score real baseado no Survival Audit.
+    Substitui o antigo placeholder: operational_score = 50.
+    """
+
+    if survival_audit is None or survival_audit.empty:
+        return 0
+
+    latest = survival_audit.iloc[-1]
+
+    runway_months = float(latest.get("runway_months", 0))
+    bucket_trilhos = int(latest.get("bucket_trilhos", 0))
+    bucket_entidades = int(latest.get("bucket_entidades", 0))
+    bucket_jurisdicoes = int(latest.get("bucket_jurisdicoes_validas", 0))
+    max_concentration = float(latest.get("max_bucket_concentration", 1.0))
+    survival_kill_switch = bool(latest.get("survival_kill_switch", True))
+
+    if survival_kill_switch:
+        return 0
+
+    score = 100
+
+    if runway_months < 24:
+        score -= 15
+    if runway_months < 18:
+        score -= 15
+    if runway_months < 12:
+        score -= 30
+
+    if bucket_trilhos < 2:
+        score -= 25
+
+    if bucket_entidades < 2:
+        score -= 20
+
+    if bucket_jurisdicoes < 2:
+        score -= 30
+
+    if max_concentration > 0.65:
+        score -= 10
+    if max_concentration > 0.80:
+        score -= 15
+    if max_concentration > 0.90:
+        score -= 25
+
+    return max(0, min(100, round(score, 2)))
+
+
 def build_audit_logs(
     latest,
     orders,
@@ -42,7 +91,6 @@ def build_audit_logs(
     }
 
     audit_log_df = pd.DataFrame([audit_log])
-
     orders_log = orders.copy()
 
     if not orders_log.empty:
@@ -100,7 +148,6 @@ def run_stress_test(rebalance):
         positions_df = positions_df.rename(columns={positions_df.columns[0]: "ativo"})
 
     positions_df["peso_atual"] = positions_df["peso_atual"].astype(float)
-
     weights = dict(zip(positions_df["ativo"], positions_df["peso_atual"]))
 
     stress_scenarios = {
@@ -249,7 +296,7 @@ def run_committee_audit(
     else:
         rebalance_score = 40
 
-    operational_score = 50
+    operational_score = calculate_operational_score(survival_audit)
 
     latest_survival = survival_audit.iloc[-1]
 
