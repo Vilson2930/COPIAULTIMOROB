@@ -113,6 +113,26 @@ def calculate_concentration_score(max_concentration):
     return 20
 
 
+def calculate_jurisdiction_score(bucket_jurisdicoes_validas):
+    """
+    Jurisdição agora é penalidade graduada, não Kill Switch absoluto.
+
+    Critério:
+    - 3+ jurisdições válidas: excelente redundância operacional
+    - 2 jurisdições válidas: adequado
+    - 1 jurisdição válida: aceitável com ressalvas
+    - 0 jurisdições válidas: frágil
+    """
+
+    if bucket_jurisdicoes_validas >= 3:
+        return 100
+    if bucket_jurisdicoes_validas == 2:
+        return 80
+    if bucket_jurisdicoes_validas == 1:
+        return 40
+    return 0
+
+
 def classify_survival(metrics):
     kill_reasons = []
     required_evidence = []
@@ -135,10 +155,12 @@ def classify_survival(metrics):
             "Distribuir bucket entre no mínimo 2 entidades jurídicas."
         )
 
+    # Ajuste de calibração:
+    # Antes, menos de 2 jurisdições válidas acionava Kill Switch.
+    # Agora, jurisdição única gera ressalva operacional, mas não reprovação automática.
     if metrics["bucket_jurisdicoes_validas"] < 2:
-        kill_reasons.append("MENOS_DE_2_JURISDICOES_VALIDAS")
         required_evidence.append(
-            "Incluir segunda jurisdição válida no bucket de sobrevivência."
+            "Adicionar segunda jurisdição válida para aumentar redundância operacional."
         )
 
     if metrics["max_bucket_concentration"] > 0.90:
@@ -259,7 +281,7 @@ def run_operational_risk(
     runway_score = calculate_runway_score(runway_months)
     trilho_score = 100 if bucket_trilhos >= 2 else 0
     entidade_score = 100 if bucket_entidades >= 2 else 0
-    jurisdicao_score = 100 if bucket_jurisdicoes_validas >= 2 else 0
+    jurisdicao_score = calculate_jurisdiction_score(bucket_jurisdicoes_validas)
     concentration_score = calculate_concentration_score(max_bucket_concentration)
 
     survival_score = (
