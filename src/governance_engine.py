@@ -36,7 +36,7 @@ def calculate_operational_score(survival_audit):
     survival_kill_switch = bool(latest.get("survival_kill_switch", True))
 
     if survival_kill_switch:
-        return 0
+        return 40
 
     score = 100
 
