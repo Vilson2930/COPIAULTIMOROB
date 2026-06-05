@@ -63,6 +63,8 @@ def fallback_result(status, text):
         "false_positive_risk": "N/D",
         "false_negative_risk": "N/D",
         "executive_summary": text,
+        "governance_recommendation": "N/D",
+        "final_opinion": text,
     }])
 
     report = pd.DataFrame([{
@@ -71,11 +73,20 @@ def fallback_result(status, text):
         "openai_audit_text": text,
     }])
 
+    details = pd.DataFrame([{
+        "timestamp_utc": timestamp,
+        "engine_consistency": "{}",
+        "main_evidences": "[]",
+        "concerns": "[]",
+    }])
+
     summary.to_csv("outputs/openai_audit_summary.csv", index=False)
     report.to_csv("outputs/openai_audit_report.csv", index=False)
+    details.to_csv("outputs/openai_audit_details.csv", index=False)
 
     return {
         "openai_audit_summary": summary,
+        "openai_audit_details": details,
         "openai_audit_report": report,
     }
 
@@ -135,7 +146,7 @@ Responda APENAS em JSON válido, sem markdown, no formato exato:
     "preocupação 2"
   ],
   "governance_recommendation": "recomendação de governança, sem ordem de compra/venda",
-  "final_opinion": "parecer final"
+  "final_opinion": "parecer final obrigatório em até 80 palavras. Nunca use N/D."
 }}
 
 Regras:
@@ -143,6 +154,7 @@ Regras:
 - audit_confidence deve ser de 0 a 100.
 - Se não houver inconsistência material, material_inconsistency deve ser false.
 - Se os motores estiverem coerentes, use audit_verdict = "COERENTE".
+- final_opinion é obrigatório e nunca pode ser vazio, N/D ou null.
 - Não invente dados que não estejam no payload.
 """
 
@@ -159,9 +171,18 @@ Regras:
         parsed = safe_json_loads(raw_text)
 
         if parsed is None:
-            status = "ERRO_PARSE_JSON"
-            text = raw_text
-            return fallback_result(status, text)
+            return fallback_result("ERRO_PARSE_JSON", raw_text)
+
+        if not parsed.get("final_opinion") or str(parsed.get("final_opinion")).strip().upper() in ["N/D", "NONE", "NULL", ""]:
+            parsed["final_opinion"] = parsed.get(
+                "executive_summary",
+                "Parecer final não informado pela auditoria OpenAI."
+            )
+
+        if not parsed.get("governance_recommendation"):
+            parsed["governance_recommendation"] = (
+                "Revalidar a coerência dos motores e arquivar evidências de auditoria."
+            )
 
         timestamp = utc_now()
 
@@ -181,7 +202,10 @@ Regras:
                 "governance_recommendation",
                 "N/D",
             ),
-            "final_opinion": parsed.get("final_opinion", "N/D"),
+            "final_opinion": parsed.get(
+                "final_opinion",
+                parsed.get("executive_summary", "Parecer final não informado pela auditoria OpenAI."),
+            ),
         }])
 
         details = pd.DataFrame([{
@@ -213,7 +237,7 @@ Regras:
         print("====================================================")
         print("OPENAI AUDITOR — STRUCTURED REVIEW")
         print("====================================================")
-        print(f"Status:              EXECUTADO")
+        print("Status:              EXECUTADO")
         print(f"Audit Verdict:       {summary.iloc[-1]['audit_verdict']}")
         print(f"Audit Score:         {summary.iloc[-1]['audit_score']}")
         print(f"Confidence:          {summary.iloc[-1]['audit_confidence']}")
@@ -221,6 +245,8 @@ Regras:
         print(f"Root Cause:          {summary.iloc[-1]['root_cause']}")
         print("----------------------------------------------------")
         print(summary.iloc[-1]["executive_summary"])
+        print("----------------------------------------------------")
+        print(summary.iloc[-1]["final_opinion"])
         print("====================================================")
 
         return {
