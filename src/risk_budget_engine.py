@@ -3,6 +3,7 @@
 import os
 from datetime import datetime, timezone
 
+import numpy as np
 import pandas as pd
 
 
@@ -51,14 +52,64 @@ def get_vol_proxy():
     }
 
 
-def classify_risk_budget(max_risk_contribution):
-    if max_risk_contribution <= 0.35:
+def get_correlation_proxy():
+    return {
+        ("BTC-USD", "USDT-USD"): 0.00,
+        ("BTC-USD", "GLD"): 0.10,
+        ("BTC-USD", "VOO"): 0.45,
+        ("BTC-USD", "TLT"): -0.15,
+        ("BTC-USD", "BOTZ"): 0.55,
+        ("BTC-USD", "INDA"): 0.35,
+
+        ("USDT-USD", "GLD"): 0.00,
+        ("USDT-USD", "VOO"): 0.00,
+        ("USDT-USD", "TLT"): 0.00,
+        ("USDT-USD", "BOTZ"): 0.00,
+        ("USDT-USD", "INDA"): 0.00,
+
+        ("GLD", "VOO"): -0.10,
+        ("GLD", "TLT"): 0.25,
+        ("GLD", "BOTZ"): -0.05,
+        ("GLD", "INDA"): -0.05,
+
+        ("VOO", "TLT"): -0.25,
+        ("VOO", "BOTZ"): 0.75,
+        ("VOO", "INDA"): 0.65,
+
+        ("TLT", "BOTZ"): -0.15,
+        ("TLT", "INDA"): -0.20,
+
+        ("BOTZ", "INDA"): 0.55,
+    }
+
+
+def build_covariance_matrix(assets, vol_proxy, corr_proxy):
+    n = len(assets)
+    cov = np.zeros((n, n))
+
+    for i, a in enumerate(assets):
+        for j, b in enumerate(assets):
+            vol_a = vol_proxy.get(a, 0.25)
+            vol_b = vol_proxy.get(b, 0.25)
+
+            if a == b:
+                corr = 1.0
+            else:
+                corr = corr_proxy.get((a, b), corr_proxy.get((b, a), 0.25))
+
+            cov[i, j] = vol_a * vol_b * corr
+
+    return cov
+
+
+def classify_risk_budget(max_positive_contribution):
+    if max_positive_contribution <= 0.35:
         return 90, "ROBUSTO"
 
-    if max_risk_contribution <= 0.50:
+    if max_positive_contribution <= 0.50:
         return 75, "ACEITAVEL"
 
-    if max_risk_contribution <= 0.65:
+    if max_positive_contribution <= 0.65:
         return 55, "CONCENTRADO"
 
     return 35, "CRITICO"
@@ -68,23 +119,41 @@ def run_risk_budget_engine(rebalance):
     timestamp_utc = utc_now()
 
     positions_df = build_positions_df(rebalance)
+
     vol_proxy = get_vol_proxy()
+    corr_proxy = get_correlation_proxy()
 
-    positions_df["vol_proxy"] = positions_df["ativo"].map(vol_proxy).fillna(0.25)
+    assets = positions_df["ativo"].tolist()
+    weights = positions_df["peso_atual"].to_numpy(dtype=float)
 
-    positions_df["risk_units"] = (
-        positions_df["peso_atual"].abs()
-        * positions_df["vol_proxy"]
+    covariance_matrix = build_covariance_matrix(
+        assets=assets,
+        vol_proxy=vol_proxy,
+        corr_proxy=corr_proxy,
     )
 
-    total_risk_units = positions_df["risk_units"].sum()
+    portfolio_variance = float(weights.T @ covariance_matrix @ weights)
+    portfolio_volatility = portfolio_variance ** 0.5 if portfolio_variance > 0 else 0.0
 
-    if total_risk_units > 0:
-        positions_df["risk_contribution_pct"] = (
-            positions_df["risk_units"] / total_risk_units
-        )
+    marginal_risk = covariance_matrix @ weights
+
+    if portfolio_variance > 0:
+        risk_contribution_raw = weights * marginal_risk / portfolio_variance
     else:
-        positions_df["risk_contribution_pct"] = 0.0
+        risk_contribution_raw = np.zeros(len(weights))
+
+    positive_contribution = np.maximum(risk_contribution_raw, 0)
+    positive_sum = positive_contribution.sum()
+
+    if positive_sum > 0:
+        risk_contribution_positive_norm = positive_contribution / positive_sum
+    else:
+        risk_contribution_positive_norm = np.zeros(len(weights))
+
+    positions_df["vol_proxy"] = positions_df["ativo"].map(vol_proxy).fillna(0.25)
+    positions_df["marginal_risk"] = marginal_risk
+    positions_df["risk_contribution_raw"] = risk_contribution_raw
+    positions_df["risk_contribution_pct"] = risk_contribution_positive_norm
 
     positions_df = positions_df.sort_values(
         "risk_contribution_pct",
@@ -110,7 +179,8 @@ def run_risk_budget_engine(rebalance):
         "valor_atual",
         "peso_atual",
         "vol_proxy",
-        "risk_units",
+        "marginal_risk",
+        "risk_contribution_raw",
         "risk_contribution_pct",
     ]].copy()
 
@@ -118,11 +188,13 @@ def run_risk_budget_engine(rebalance):
 
     risk_budget_summary = pd.DataFrame([{
         "timestamp_utc": timestamp_utc,
+        "portfolio_volatility_proxy": round(portfolio_volatility, 6),
+        "portfolio_variance_proxy": round(portfolio_variance, 6),
         "risk_budget_score": risk_budget_score,
         "risk_budget_level": risk_budget_level,
         "max_risk_contribution_pct": round(max_risk_contribution * 100, 2),
         "top_risk_asset": top_asset,
-        "total_risk_units": round(float(total_risk_units), 6),
+        "method": "COVARIANCE_PROXY",
     }])
 
     ensure_outputs_dir()
@@ -138,9 +210,11 @@ def run_risk_budget_engine(rebalance):
     )
 
     print("====================================================")
-    print("RISK BUDGET ENGINE")
+    print("RISK BUDGET ENGINE — COVARIANCE PROXY")
     print("====================================================")
     print(f"Data UTC:              {timestamp_utc}")
+    print(f"Metodo:                COVARIANCE_PROXY")
+    print(f"Portfolio Vol Proxy:   {portfolio_volatility:.2%}")
     print(f"Top Risk Asset:        {top_asset}")
     print(f"Max Risk Contribution: {max_risk_contribution:.2%}")
     print(f"Risk Budget Score:     {risk_budget_score}")
@@ -150,6 +224,7 @@ def run_risk_budget_engine(rebalance):
         "ativo",
         "peso_atual",
         "vol_proxy",
+        "risk_contribution_raw",
         "risk_contribution_pct",
     ]].to_string(index=False))
     print("====================================================")
