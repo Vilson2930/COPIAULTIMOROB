@@ -3,9 +3,6 @@ from datetime import datetime, timezone
 import pandas as pd
 
 
-OUTPUTS = Path("outputs")
-
-
 def utc_now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -41,24 +38,51 @@ def fmt(value, decimals=2, default="N/D"):
         return default
 
 
+def is_true(value):
+    return str(value).upper().strip() in ["TRUE", "1", "SIM", "YES"]
+
+
 def status_color(value):
     v = str(value).upper()
-    if any(x in v for x in ["APROVADO", "VALIDADO", "BAIXO", "NORMAL", "OK", "INSTITUCIONAL"]):
-        return "#22c55e"
-    if any(x in v for x in ["RESSALVA", "MEDIO", "MÉDIO", "MODERADO", "ATENCAO", "ATENÇÃO", "NEUTRO"]):
-        return "#facc15"
     if any(x in v for x in ["REPROVADO", "CRITICO", "CRÍTICO", "ALTO", "FAIL", "BLOQUEAR"]):
         return "#ef4444"
+    if any(x in v for x in ["RESSALVA", "MEDIO", "MÉDIO", "MODERADO", "ATENCAO", "ATENÇÃO", "FRAGIL", "FRÁGIL"]):
+        return "#facc15"
+    if any(x in v for x in ["APROVADO", "VALIDADO", "BAIXO", "NORMAL", "OK", "INSTITUCIONAL", "ROBUSTO", "ACEITAVEL"]):
+        return "#22c55e"
     return "#38bdf8"
 
 
 def card(title, value, subtitle="", color="#38bdf8"):
     return f"""
-    <td style="background:#020617;border:1px solid #1f2937;border-radius:14px;padding:18px;width:33%;">
+    <td style="background:#020617;border:1px solid #1f2937;border-radius:14px;padding:18px;width:33%;vertical-align:top;">
         <div style="font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:.08em;">{title}</div>
         <div style="font-size:22px;color:{color};font-weight:700;margin-top:8px;">{value}</div>
         <div style="font-size:12px;color:#9ca3af;margin-top:6px;">{subtitle}</div>
     </td>
+    """
+
+
+def flag_row(label, active):
+    color = "#ef4444" if active else "#22c55e"
+    mark = "X" if active else " "
+    return f"""
+    <tr>
+        <td style="padding:10px;border-bottom:1px solid #1f2937;color:#d1d5db;">[{mark}] {label}</td>
+        <td style="padding:10px;border-bottom:1px solid #1f2937;color:{color};font-weight:bold;">
+            {"ACIONADO" if active else "OK"}
+        </td>
+    </tr>
+    """
+
+
+def engine_row(name, status, score="N/D"):
+    return f"""
+    <tr>
+        <td style="padding:10px;border-bottom:1px solid #1f2937;color:#d1d5db;">{name}</td>
+        <td style="padding:10px;border-bottom:1px solid #1f2937;color:{status_color(status)};font-weight:bold;">{status}</td>
+        <td style="padding:10px;border-bottom:1px solid #1f2937;color:#f9fafb;">{score}</td>
+    </tr>
     """
 
 
@@ -94,11 +118,10 @@ def build_macro_interpretation(real_yield, nfci, hy_spread, yield_curve, early_w
     else:
         comments.append("Curva de juros positiva reduz pressão recessiva imediata.")
 
-    ew = str(early_warning).upper()
-    if ew in ["TRUE", "1", "SIM", "YES", "ALERTA"]:
+    if is_true(early_warning):
         conclusion = "Conclusão: ambiente exige cautela; há sinais de deterioração antecipada."
     else:
-        conclusion = "Conclusão: ambiente compatível com manutenção de risco, condicionado à governança operacional."
+        conclusion = "Conclusão: ambiente macro compatível com manutenção de risco, condicionado à governança operacional."
 
     items = "".join(f"<li>{x}</li>" for x in comments)
 
@@ -111,235 +134,113 @@ def build_macro_interpretation(real_yield, nfci, hy_spread, yield_curve, early_w
 
 
 def build_institutional_report():
-    dashboard = read_latest_csv(
-        "outputs/executive_dashboard.csv",
-        "executive_dashboard.csv",
-    )
+    dashboard = read_latest_csv("outputs/executive_dashboard.csv", "executive_dashboard.csv")
+    macro = read_latest_csv("outputs/macro_engine_audit.csv", "macro_engine_audit.csv")
+    market = read_latest_csv("outputs/market_data_audit.csv", "outputs/market_audit.csv", "market_audit.csv")
+    risk = read_latest_csv("outputs/risk_committee_integrated.csv", "risk_committee_integrated.csv")
+    survival = read_latest_csv("outputs/survival_audit.csv", "survival_audit.csv")
+    stress = read_latest_csv("outputs/stress_summary_v2.csv", "outputs/stress_summary.csv")
+    risk_budget = read_latest_csv("outputs/risk_budget_summary.csv")
+    liquidity = read_latest_csv("outputs/liquidity_summary.csv")
+    counterparty = read_latest_csv("outputs/counterparty_summary.csv")
+    deterioration = read_latest_csv("outputs/deterioration_audit.csv")
+    liquidity_forecast = read_latest_csv("outputs/liquidity_forecast_log.csv")
+    fred = read_latest_csv("outputs/fred_macro_cache.csv", "fred_macro_cache.csv")
 
-    macro = read_latest_csv(
-        "outputs/macro_engine_audit.csv",
-        "outputs/macro_engine_v4_audit.csv",
-        "macro_engine_audit.csv",
-        "macro_engine_v4_audit.csv",
-    )
+    regime = first_valid(dashboard.get("regime"), macro.get("regime"))
+    signal = first_valid(dashboard.get("sinal"), dashboard.get("sinal_operacional"), macro.get("sinal_operacional"))
+    macro_conviction = first_valid(dashboard.get("macro_conviction"), macro.get("macro_conviction"))
+    confidence = first_valid(dashboard.get("confidence"), dashboard.get("confidence_score"), macro.get("confidence_score"))
+    macro_score = first_valid(macro.get("macro_score"), macro_conviction)
+    macro_momentum = first_valid(macro.get("macro_momentum"), "N/D")
 
-    market = read_latest_csv(
-        "outputs/market_data_audit.csv",
-        "outputs/market_audit.csv",
-        "market_data_audit.csv",
-        "market_audit.csv",
-    )
+    final_verdict = first_valid(dashboard.get("final_verdict"), risk.get("final_verdict"))
+    committee_action = first_valid(dashboard.get("committee_action"), risk.get("committee_action"))
 
-    risk = read_latest_csv(
-        "outputs/risk_committee_integrated.csv",
-        "risk_committee_integrated.csv",
-    )
+    ruin_risk = first_valid(dashboard.get("ruin_risk"), survival.get("ruin_risk"))
+    survival_status = first_valid(dashboard.get("survival_status"), survival.get("survival_status"))
+    survival_score = first_valid(survival.get("survival_score"))
+    runway_months = first_valid(survival.get("runway_months"))
+    survival_kill_switch = first_valid(survival.get("survival_kill_switch"), False)
 
-    survival = read_latest_csv(
-        "outputs/survival_audit.csv",
-        "survival_audit.csv",
-    )
+    stress_level = first_valid(stress.get("stress_level"), stress.get("robustez"))
+    stress_score = first_valid(stress.get("stress_score"))
+    max_drawdown = first_valid(stress.get("max_drawdown_pct"))
+    forced_selling = first_valid(stress.get("forced_selling_any"), False)
 
-    deterioration = read_latest_csv(
-        "outputs/deterioration_audit.csv",
-        "deterioration_audit.csv",
-    )
+    risk_budget_level = first_valid(risk_budget.get("risk_budget_level"))
+    risk_budget_score = first_valid(risk_budget.get("risk_budget_score"))
+    top_risk_asset = first_valid(risk_budget.get("top_risk_asset"))
+    top_risk_contribution = first_valid(risk_budget.get("max_risk_contribution_pct"))
 
-    liquidity = read_latest_csv(
-        "outputs/liquidity_forecast_log.csv",
-        "liquidity_forecast_log.csv",
-    )
+    liquidity_level = first_valid(liquidity.get("liquidity_level"))
+    liquidity_score = first_valid(liquidity.get("liquidity_score"))
+    haircut = first_valid(liquidity.get("aggregate_haircut_pct"), liquidity.get("aggregate_operational_haircut_pct"))
+    liquid_value = first_valid(liquidity.get("liquid_value"), liquidity.get("operational_liquid_value"))
 
-    fred = read_latest_csv(
-        "outputs/fred_macro_cache.csv",
-        "fred_macro_cache.csv",
-    )
+    counterparty_level = first_valid(counterparty.get("counterparty_level"))
+    counterparty_score = first_valid(counterparty.get("counterparty_score"))
+    largest_counterparty = first_valid(counterparty.get("largest_counterparty"))
 
-    regime = first_valid(
-        dashboard.get("regime"),
-        dashboard.get("regime_macro"),
-        macro.get("regime"),
-        macro.get("regime_macro"),
-    )
+    market_status = first_valid(market.get("market_status"), market.get("market_data_status"), "INSTITUCIONAL")
+    market_score = first_valid(market.get("market_score"), market.get("market_data_score"), "100")
 
-    signal = first_valid(
-        dashboard.get("sinal_operacional"),
-        dashboard.get("sinal"),
-        dashboard.get("signal"),
-        macro.get("sinal_operacional"),
-        macro.get("sinal"),
-        macro.get("signal"),
-    )
+    deterioration_score = first_valid(deterioration.get("deterioration_score"))
+    deterioration_status = first_valid(deterioration.get("deterioration_status"))
+    early_warning = first_valid(deterioration.get("early_warning"), False)
 
-    macro_conviction = first_valid(
-        dashboard.get("macro_conviction"),
-        macro.get("macro_conviction"),
-        macro.get("conviction"),
-    )
+    future_regime = first_valid(liquidity_forecast.get("future_regime"), dashboard.get("future_regime"))
+    future_liquidity_score = first_valid(liquidity_forecast.get("future_liquidity_score"))
 
-    confidence = first_valid(
-        dashboard.get("confidence_score"),
-        dashboard.get("confidence"),
-        macro.get("confidence_score"),
-        macro.get("confidence"),
-    )
+    real_yield = first_valid(fred.get("real_yield_10y"), fred.get("DFII10"))
+    nfci = first_valid(fred.get("nfci"), fred.get("financial_conditions"))
+    hy_spread = first_valid(fred.get("hy_spread"), fred.get("high_yield_spread"))
+    yield_curve = first_valid(fred.get("yield_curve_10y_3m"), fred.get("yield_curve"))
+    dxy_proxy = first_valid(fred.get("dxy_proxy"), fred.get("DTWEXBGS"))
+    vix = first_valid(fred.get("vix"), fred.get("VIXCLS"))
+    fed_assets = first_valid(fred.get("fed_assets"), fred.get("WALCL"))
 
-    macro_score = first_valid(
-        dashboard.get("macro_score"),
-        macro.get("macro_score"),
-        macro.get("score"),
-        macro_conviction,
-    )
+    runway_fail = False
+    try:
+        runway_fail = float(runway_months) < 12
+    except Exception:
+        pass
 
-    macro_momentum = first_valid(
-        dashboard.get("macro_momentum"),
-        macro.get("macro_momentum"),
-        macro.get("momentum"),
-        "Não informado pelo motor",
-    )
+    survival_ks = is_true(survival_kill_switch)
+    forced_sell = is_true(forced_selling)
+    liquidity_critical = str(liquidity_level).upper() in ["CRITICO", "CRÍTICO"]
+    counterparty_fail = str(counterparty_level).upper() in ["CRITICO", "CRÍTICO"]
+    macro_fail = str(regime).upper() in ["STRESS_SISTEMICO", "CONTRACAO"]
 
-    final_verdict = first_valid(
-        dashboard.get("final_verdict"),
-        risk.get("final_verdict"),
-        risk.get("verdict"),
-    )
+    if survival_ks or runway_fail:
+        primary_cause = "INSUFICIÊNCIA DO BUCKET DE SOBREVIVÊNCIA"
+        decision_type = "REPROVAÇÃO OPERACIONAL"
+    elif forced_sell:
+        primary_cause = "RISCO DE FORCED SELLING EM CENÁRIOS DE ESTRESSE"
+        decision_type = "REPROVAÇÃO POR ESTRESSE"
+    elif liquidity_critical:
+        primary_cause = "LIQUIDEZ OPERACIONAL CRÍTICA"
+        decision_type = "RESTRIÇÃO DE LIQUIDEZ"
+    elif counterparty_fail:
+        primary_cause = "FRAGILIDADE DE CONTRAPARTE"
+        decision_type = "RESTRIÇÃO DE CONTRAPARTE"
+    elif macro_fail:
+        primary_cause = "DETERIORAÇÃO MACROECONÔMICA"
+        decision_type = "RESTRIÇÃO MACRO"
+    else:
+        primary_cause = "SEM FALHA CRÍTICA PRIMÁRIA"
+        decision_type = "APROVAÇÃO OU APROVAÇÃO CONDICIONAL"
 
-    committee_action = first_valid(
-        dashboard.get("committee_action"),
-        risk.get("committee_action"),
-        risk.get("acao_comite"),
-    )
-
-    ruin_risk = first_valid(
-        dashboard.get("ruin_risk"),
-        survival.get("ruin_risk"),
-    )
-
-    survival_status = first_valid(
-        dashboard.get("survival_status"),
-        survival.get("survival_status"),
-    )
-
-    survival_score = first_valid(
-        dashboard.get("survival_score"),
-        survival.get("survival_score"),
-    )
-
-    runway_months = first_valid(
-        dashboard.get("runway_months"),
-        survival.get("runway_months"),
-    )
-
-    market_status = first_valid(
-        market.get("market_status"),
-        market.get("market_data_status"),
-        market.get("data_status"),
-        market.get("status"),
-        dashboard.get("market_status"),
-        "INSTITUCIONAL",
-    )
-
-    market_score = first_valid(
-        market.get("market_score"),
-        market.get("market_data_score"),
-        market.get("score"),
-        dashboard.get("market_score"),
-        "100",
-    )
-
-    deterioration_score = first_valid(
-        deterioration.get("deterioration_score"),
-        deterioration.get("score"),
-        dashboard.get("deterioration_score"),
-        "Não informado",
-    )
-
-    deterioration_status = first_valid(
-        deterioration.get("deterioration_status"),
-        deterioration.get("status"),
-        dashboard.get("deterioration_status"),
-        "Sem alerta crítico",
-    )
-
-    early_warning = first_valid(
-        deterioration.get("early_warning"),
-        deterioration.get("warning"),
-        dashboard.get("early_warning"),
-        "False",
-    )
-
-    future_regime = first_valid(
-        liquidity.get("future_regime"),
-        dashboard.get("future_regime"),
-        "NEUTRO_FRAGIL",
-    )
-
-    future_liquidity_score = first_valid(
-        liquidity.get("future_liquidity_score"),
-        liquidity.get("liquidity_score"),
-        dashboard.get("future_liquidity_score"),
-        "Não informado",
-    )
-
-    real_yield = first_valid(
-        fred.get("real_yield_10y"),
-        fred.get("DFII10"),
-    )
-
-    nfci = first_valid(
-        fred.get("nfci"),
-        fred.get("financial_conditions"),
-        fred.get("NFCI"),
-    )
-
-    hy_spread = first_valid(
-        fred.get("hy_spread"),
-        fred.get("high_yield_spread"),
-        fred.get("BAMLH0A0HYM2"),
-    )
-
-    yield_curve = first_valid(
-        fred.get("yield_curve_10y_3m"),
-        fred.get("yield_curve"),
-        fred.get("T10Y3M"),
-    )
-
-    dxy_proxy = first_valid(
-        fred.get("dxy_proxy"),
-        fred.get("DTWEXBGS"),
-        "Não informado",
-    )
-
-    vix = first_valid(
-        fred.get("vix"),
-        fred.get("VIXCLS"),
-        "Não informado",
-    )
-
-    fed_assets = first_valid(
-        fred.get("fed_assets"),
-        fred.get("WALCL"),
-        "Não informado",
-    )
-
-    macro_text = build_macro_interpretation(
-        real_yield=real_yield,
-        nfci=nfci,
-        hy_spread=hy_spread,
-        yield_curve=yield_curve,
-        early_warning=early_warning,
-    )
+    macro_text = build_macro_interpretation(real_yield, nfci, hy_spread, yield_curve, early_warning)
 
     verdict_color = status_color(final_verdict)
-    ruin_color = status_color(ruin_risk)
-    survival_color = status_color(survival_status)
 
     return f"""
 <!DOCTYPE html>
 <html>
 <body style="margin:0;padding:0;background:#0b0f14;font-family:Arial,Helvetica,sans-serif;color:#e5e7eb;">
 
-<div style="max-width:920px;margin:28px auto;background:#111827;border:1px solid #1f2937;border-radius:22px;padding:34px;">
+<div style="max-width:960px;margin:28px auto;background:#111827;border:1px solid #1f2937;border-radius:22px;padding:34px;">
 
     <div style="border-bottom:1px solid #1f2937;padding-bottom:22px;margin-bottom:26px;">
         <h1 style="margin:0;color:#60a5fa;font-size:34px;letter-spacing:.03em;">ULTIMOROBO</h1>
@@ -351,33 +252,91 @@ def build_institutional_report():
         </p>
     </div>
 
-    <div style="background:#020617;border:1px solid #1f2937;border-radius:18px;padding:24px;margin-bottom:26px;">
+    <div style="background:#020617;border:1px solid #1f2937;border-radius:18px;padding:24px;margin-bottom:22px;">
         <div style="font-size:13px;color:#9ca3af;text-transform:uppercase;letter-spacing:.08em;">Veredito Executivo</div>
-        <div style="font-size:30px;color:{verdict_color};font-weight:800;margin-top:8px;">
-            {final_verdict}
+        <div style="font-size:30px;color:{verdict_color};font-weight:800;margin-top:8px;">{final_verdict}</div>
+        <div style="font-size:14px;color:#d1d5db;margin-top:10px;">Ação do Comitê: <b>{committee_action}</b></div>
+        <div style="font-size:14px;color:#f9fafb;margin-top:14px;">
+            Tipo de decisão: <b>{decision_type}</b><br>
+            Motivo primário: <b>{primary_cause}</b>
         </div>
-        <div style="font-size:14px;color:#d1d5db;margin-top:10px;">
-            Ação do Comitê: <b>{committee_action}</b>
-        </div>
+    </div>
+
+    <div style="background:#1e1b4b;border:1px solid #3730a3;border-radius:16px;padding:20px;margin-bottom:26px;">
+        <h2 style="margin:0 0 10px 0;color:#ffffff;font-size:20px;">Diagnóstico da Decisão</h2>
+        <p style="color:#d1d5db;line-height:1.7;margin:0;">
+            O ambiente macroeconômico foi classificado como <b>{regime}</b>, com sinal <b>{signal}</b>.
+            Entretanto, o veredito final é determinado pela hierarquia de risco do sistema.
+            No cenário atual, a decisão foi conduzida principalmente por <b>{primary_cause}</b>.
+        </p>
     </div>
 
     <table style="width:100%;border-spacing:12px;margin-bottom:20px;">
         <tr>
-            {card("Regime Macro", regime, "Classificação do ciclo", "#38bdf8")}
-            {card("Sinal Operacional", signal, "Direção tática", "#38bdf8")}
-            {card("Risco de Ruína", ruin_risk, "Governança de sobrevivência", ruin_color)}
+            {card("Regime Macro", regime, "Classificação do ciclo", status_color(regime))}
+            {card("Sinal Operacional", signal, "Direção tática", status_color(signal))}
+            {card("Risco de Ruína", ruin_risk, "Governança de sobrevivência", status_color(ruin_risk))}
         </tr>
     </table>
 
-    <table style="width:100%;border-spacing:12px;margin-bottom:26px;">
+    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">1. Gatilhos de Decisão</h2>
+
+    <table style="width:100%;border-collapse:collapse;background:#020617;border:1px solid #1f2937;border-radius:14px;overflow:hidden;">
+        {flag_row("Runway inferior a 12 meses", runway_fail)}
+        {flag_row("Survival Kill Switch acionado", survival_ks)}
+        {flag_row("Forced Selling identificado", forced_sell)}
+        {flag_row("Liquidez operacional crítica", liquidity_critical)}
+        {flag_row("Fragilidade de contraparte", counterparty_fail)}
+        {flag_row("Disfunção macro extrema", macro_fail)}
+    </table>
+
+    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">2. Matriz dos Motores</h2>
+
+    <table style="width:100%;border-collapse:collapse;background:#020617;border:1px solid #1f2937;border-radius:14px;overflow:hidden;">
         <tr>
-            {card("Macro Conviction", fmt(macro_conviction), "Score composto", "#facc15")}
-            {card("Confidence", fmt(confidence), "Confiabilidade do sinal", "#facc15")}
-            {card("Macro Momentum", macro_momentum if not str(macro_momentum).replace('.', '', 1).isdigit() else fmt(macro_momentum), "Direção do regime", "#facc15")}
+            <th style="padding:10px;color:#9ca3af;text-align:left;">Motor</th>
+            <th style="padding:10px;color:#9ca3af;text-align:left;">Status</th>
+            <th style="padding:10px;color:#9ca3af;text-align:left;">Score / Métrica</th>
+        </tr>
+        {engine_row("Macro Engine", regime, fmt(macro_conviction))}
+        {engine_row("Market Data Engine", market_status, fmt(market_score))}
+        {engine_row("Survival Engine", survival_status, fmt(survival_score))}
+        {engine_row("Stress Engine", stress_level, fmt(stress_score))}
+        {engine_row("Risk Budget Engine", risk_budget_level, fmt(risk_budget_score))}
+        {engine_row("Liquidity Engine", liquidity_level, fmt(liquidity_score))}
+        {engine_row("Counterparty Engine", counterparty_level, fmt(counterparty_score))}
+        {engine_row("Governance Engine", final_verdict, committee_action)}
+    </table>
+
+    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">3. Sobrevivência Operacional</h2>
+
+    <table style="width:100%;border-spacing:12px;">
+        <tr>
+            {card("Runway", fmt(runway_months), "Política mínima: 12 meses", status_color("CRITICO" if runway_fail else "OK"))}
+            {card("Survival Score", fmt(survival_score), survival_status, status_color(survival_status))}
+            {card("Kill Switch", survival_kill_switch, "Controle anti-ruína", status_color("CRITICO" if survival_ks else "OK"))}
         </tr>
     </table>
 
-    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">1. Painel Macroeconômico</h2>
+    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">4. Estresse, Liquidez e Risco</h2>
+
+    <table style="width:100%;border-spacing:12px;">
+        <tr>
+            {card("Max Drawdown", f"{fmt(max_drawdown)}%", f"Stress: {stress_level}", status_color(stress_level))}
+            {card("Forced Selling", forced_selling, "Venda forçada em stress", status_color("CRITICO" if forced_sell else "OK"))}
+            {card("Risk Budget", risk_budget_level, f"{top_risk_asset} / {fmt(top_risk_contribution)}%", status_color(risk_budget_level))}
+        </tr>
+    </table>
+
+    <table style="width:100%;border-spacing:12px;margin-top:8px;">
+        <tr>
+            {card("Liquidity", liquidity_level, f"Haircut: {fmt(haircut)}%", status_color(liquidity_level))}
+            {card("Valor Líquido Operacional", f"US${fmt(liquid_value)}", "Após haircuts operacionais", "#38bdf8")}
+            {card("Counterparty", counterparty_level, f"Maior: {largest_counterparty}", status_color(counterparty_level))}
+        </tr>
+    </table>
+
+    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">5. Painel Macroeconômico</h2>
 
     <table style="width:100%;border-collapse:collapse;background:#020617;border:1px solid #1f2937;border-radius:14px;overflow:hidden;">
         <tr>
@@ -394,61 +353,43 @@ def build_institutional_report():
         </tr>
         <tr>
             <td style="padding:12px;color:#9ca3af;">DXY Proxy</td>
-            <td style="padding:12px;color:#ffffff;font-weight:bold;">{dxy_proxy if fmt(dxy_proxy) == 'N/D' else fmt(dxy_proxy)}</td>
+            <td style="padding:12px;color:#ffffff;font-weight:bold;">{fmt(dxy_proxy)}</td>
             <td style="padding:12px;color:#9ca3af;">VIX</td>
-            <td style="padding:12px;color:#ffffff;font-weight:bold;">{vix if fmt(vix) == 'N/D' else fmt(vix)}</td>
+            <td style="padding:12px;color:#ffffff;font-weight:bold;">{fmt(vix)}</td>
         </tr>
         <tr>
             <td style="padding:12px;color:#9ca3af;">Fed Assets</td>
-            <td style="padding:12px;color:#ffffff;font-weight:bold;">{fed_assets if fmt(fed_assets) == 'N/D' else fmt(fed_assets)}</td>
+            <td style="padding:12px;color:#ffffff;font-weight:bold;">{fmt(fed_assets)}</td>
             <td style="padding:12px;color:#9ca3af;">Macro Score</td>
             <td style="padding:12px;color:#ffffff;font-weight:bold;">{fmt(macro_score)}</td>
         </tr>
     </table>
 
-    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">2. Interpretação Macro</h2>
+    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">6. Interpretação Macro</h2>
 
     <div style="background:#020617;border:1px solid #1f2937;border-radius:14px;padding:20px;">
         {macro_text}
     </div>
 
-    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">3. Monitor de Deterioração e Liquidez</h2>
+    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">7. Condições para Revalidação</h2>
 
-    <table style="width:100%;border-spacing:12px;">
-        <tr>
-            {card("Deterioration Score", deterioration_score if fmt(deterioration_score) == "N/D" else fmt(deterioration_score), deterioration_status, status_color(deterioration_status))}
-            {card("Early Warning", early_warning, "Alerta antecipado", status_color(early_warning))}
-            {card("Liquidez Futura", future_liquidity_score if fmt(future_liquidity_score) == "N/D" else fmt(future_liquidity_score), future_regime, "#38bdf8")}
-        </tr>
-    </table>
-
-    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">4. Sobrevivência Operacional</h2>
-
-    <table style="width:100%;border-spacing:12px;">
-        <tr>
-            {card("Survival Status", survival_status, "Bucket operacional", survival_color)}
-            {card("Survival Score", fmt(survival_score), "Score anti-ruína", survival_color)}
-            {card("Runway", fmt(runway_months), "Meses estimados", "#38bdf8")}
-        </tr>
-    </table>
-
-    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">5. Qualidade dos Dados</h2>
-
-    <table style="width:100%;border-spacing:12px;">
-        <tr>
-            {card("Market Status", market_status, "Auditoria de mercado", status_color(market_status))}
-            {card("Market Score", fmt(market_score), "Integridade dos dados", "#38bdf8")}
-            {card("Macro Score", fmt(macro_score), "Score agregado", "#facc15")}
-        </tr>
-    </table>
+    <div style="background:#020617;border:1px solid #1f2937;border-radius:14px;padding:20px;color:#d1d5db;line-height:1.7;">
+        <ol style="margin:0;padding-left:22px;">
+            <li>Restaurar runway operacional para no mínimo 12 meses.</li>
+            <li>Executar nova rodada do Survival Engine com Kill Switch = False.</li>
+            <li>Confirmar ausência de Forced Selling nos cenários de stress.</li>
+            <li>Revalidar Risk Budget, Liquidity e Counterparty após ajustes.</li>
+            <li>Arquivar novo relatório executivo e logs de auditoria.</li>
+        </ol>
+    </div>
 
     <div style="background:#020617;border:1px solid #1f2937;border-radius:14px;padding:20px;margin-top:26px;">
         <h2 style="margin:0 0 12px 0;color:#f9fafb;font-size:20px;">Conclusão do Comitê</h2>
         <p style="color:#d1d5db;line-height:1.7;margin:0;">
-            O sistema classificou o ambiente como <b>{regime}</b>, com sinal operacional
-            <b>{signal}</b>. O nível de conviction macro é <b>{fmt(macro_conviction)}</b>,
-            com risco de ruína classificado como <b>{ruin_risk}</b>.
-            O veredito final do comitê é <b style="color:{verdict_color};">{final_verdict}</b>.
+            O sistema classificou o ambiente macro como <b>{regime}</b>, com sinal operacional
+            <b>{signal}</b>. Contudo, a decisão final do comitê é <b style="color:{verdict_color};">{final_verdict}</b>,
+            pois o fator determinante foi <b>{primary_cause}</b>. A ação recomendada é
+            <b>{committee_action}</b>.
         </p>
     </div>
 
