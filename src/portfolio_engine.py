@@ -1,12 +1,61 @@
 # src/portfolio_engine.py
 
+import os
+
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone
 
 
+LIVE_PORTFOLIO_PATH = "config/live_portfolio.csv"
+
+
 def utc_now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def load_live_portfolio(path=LIVE_PORTFOLIO_PATH, required_assets=None):
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Arquivo obrigatório ausente: {path}")
+
+    portfolio = pd.read_csv(path)
+
+    required_columns = ["ativo", "quantidade"]
+    missing = [col for col in required_columns if col not in portfolio.columns]
+
+    if missing:
+        raise ValueError(f"live_portfolio.csv com colunas ausentes: {missing}")
+
+    portfolio = portfolio.copy()
+    portfolio["ativo"] = portfolio["ativo"].astype(str).str.strip()
+    portfolio["quantidade"] = portfolio["quantidade"].astype(float)
+
+    if portfolio["ativo"].duplicated().any():
+        portfolio = portfolio.groupby("ativo", as_index=False)["quantidade"].sum()
+
+    if required_assets is not None:
+        required_assets = list(required_assets)
+
+        unknown_assets = sorted(set(portfolio["ativo"]) - set(required_assets))
+
+        if unknown_assets:
+            raise ValueError(
+                f"Ativos no live_portfolio.csv sem preço/regra no robô: {unknown_assets}"
+            )
+
+        missing_assets = sorted(set(required_assets) - set(portfolio["ativo"]))
+
+        if missing_assets:
+            missing_df = pd.DataFrame({
+                "ativo": missing_assets,
+                "quantidade": [0.0] * len(missing_assets),
+            })
+
+            portfolio = pd.concat([portfolio, missing_df], ignore_index=True)
+
+        portfolio = portfolio.set_index("ativo").loc[required_assets].reset_index()
+
+    return dict(zip(portfolio["ativo"], portfolio["quantidade"]))
 
 
 def interpolate_allocations(a, b, t):
@@ -134,7 +183,6 @@ def run_rebalance(latest, latest_market, target_allocation):
 
     USDT_MIN_WEIGHT = 0.05
     TLT_MIN_WEIGHT = 0.08
-    GLD_STRATEGIC_FLOOR = 0.05
 
     GLD_MIN_WEIGHT = 0.07
     GLD_MAX_WEIGHT = 0.25
@@ -151,15 +199,9 @@ def run_rebalance(latest, latest_market, target_allocation):
         "INDA": 0.15,
     }
 
-    portfolio_qty = {
-        "BTC-USD": 0.6020509176,
-        "USDT-USD": 24000.0,
-        "GLD": 13.0,
-        "VOO": 23.0,
-        "TLT": 130.0,
-        "BOTZ": 10.0,
-        "INDA": 10.0,
-    }
+    portfolio_qty = load_live_portfolio(
+        required_assets=target_allocation.keys()
+    )
 
     latest_prices = {
         "BTC-USD": float(latest_market["btc"]),
@@ -177,9 +219,7 @@ def run_rebalance(latest, latest_market, target_allocation):
     confidence_score = float(latest["confidence_score"])
 
     liquidity_score = float(latest["liquidez"])
-    growth_score = float(latest["crescimento"])
     stress_score_macro = float(latest["stress"])
-    inflation_score = float(latest["inflacao"])
 
     warning_score_current = 0.0
     trend_positive = macro_momentum > 0
@@ -495,9 +535,10 @@ def run_rebalance(latest, latest_market, target_allocation):
     orders = rebalance[rebalance["acao"] != "MANTER"].copy()
 
     print("====================================================")
-    print("PORTFOLIO ENGINE — REBALANCEADOR V7")
+    print("PORTFOLIO ENGINE — REBALANCEADOR V8 LIVE PORTFOLIO")
     print("====================================================")
     print(f"Data UTC:                  {utc_now()}")
+    print(f"Carteira fonte:            {LIVE_PORTFOLIO_PATH}")
     print(f"Valor total:               US${total_value:,.2f}")
     print(f"Macro Conviction:          {macro_conviction:.2f}")
     print(f"Macro Score:               {macro_score:.2f}")
