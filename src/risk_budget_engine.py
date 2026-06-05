@@ -8,6 +8,7 @@ import pandas as pd
 
 
 OUTPUT_DIR = "outputs"
+LOOKBACK_DAYS = 252
 
 
 def utc_now():
@@ -40,7 +41,19 @@ def build_positions_df(rebalance):
     return positions_df
 
 
-def get_vol_proxy():
+def asset_column_map():
+    return {
+        "BTC-USD": ["BTC-USD", "btc", "BTC", "bitcoin"],
+        "USDT-USD": ["USDT-USD", "usdt", "USDT"],
+        "GLD": ["GLD", "gld"],
+        "VOO": ["VOO", "voo"],
+        "TLT": ["TLT", "tlt"],
+        "BOTZ": ["BOTZ", "botz"],
+        "INDA": ["INDA", "inda"],
+    }
+
+
+def get_vol_fallback():
     return {
         "BTC-USD": 0.75,
         "USDT-USD": 0.02,
@@ -52,7 +65,7 @@ def get_vol_proxy():
     }
 
 
-def get_correlation_proxy():
+def get_corr_fallback():
     return {
         ("BTC-USD", "USDT-USD"): 0.00,
         ("BTC-USD", "GLD"): 0.10,
@@ -60,46 +73,138 @@ def get_correlation_proxy():
         ("BTC-USD", "TLT"): -0.15,
         ("BTC-USD", "BOTZ"): 0.55,
         ("BTC-USD", "INDA"): 0.35,
-
         ("USDT-USD", "GLD"): 0.00,
         ("USDT-USD", "VOO"): 0.00,
         ("USDT-USD", "TLT"): 0.00,
         ("USDT-USD", "BOTZ"): 0.00,
         ("USDT-USD", "INDA"): 0.00,
-
         ("GLD", "VOO"): -0.10,
         ("GLD", "TLT"): 0.25,
         ("GLD", "BOTZ"): -0.05,
         ("GLD", "INDA"): -0.05,
-
         ("VOO", "TLT"): -0.25,
         ("VOO", "BOTZ"): 0.75,
         ("VOO", "INDA"): 0.65,
-
         ("TLT", "BOTZ"): -0.15,
         ("TLT", "INDA"): -0.20,
-
         ("BOTZ", "INDA"): 0.55,
     }
 
 
-def build_covariance_matrix(assets, vol_proxy, corr_proxy):
+def build_covariance_fallback(assets):
+    vol = get_vol_fallback()
+    corr = get_corr_fallback()
     n = len(assets)
     cov = np.zeros((n, n))
 
     for i, a in enumerate(assets):
         for j, b in enumerate(assets):
-            vol_a = vol_proxy.get(a, 0.25)
-            vol_b = vol_proxy.get(b, 0.25)
+            vol_a = vol.get(a, 0.25)
+            vol_b = vol.get(b, 0.25)
 
             if a == b:
-                corr = 1.0
+                c = 1.0
             else:
-                corr = corr_proxy.get((a, b), corr_proxy.get((b, a), 0.25))
+                c = corr.get((a, b), corr.get((b, a), 0.25))
 
-            cov[i, j] = vol_a * vol_b * corr
+            cov[i, j] = vol_a * vol_b * c
 
-    return cov
+    return cov, {a: vol.get(a, 0.25) for a in assets}, "COVARIANCE_FALLBACK_PROXY"
+
+
+def extract_price_matrix(market_data, assets):
+    if market_data is None or market_data.empty:
+        return None
+
+    df = market_data.copy()
+    col_map = asset_column_map()
+    prices = pd.DataFrame(index=df.index)
+
+    lower_cols = {str(c).lower(): c for c in df.columns}
+
+    for asset in assets:
+        found_col = None
+
+        for candidate in col_map.get(asset, [asset]):
+            if candidate in df.columns:
+                found_col = candidate
+                break
+
+            if candidate.lower() in lower_cols:
+                found_col = lower_cols[candidate.lower()]
+                break
+
+        if found_col is not None:
+            prices[asset] = pd.to_numeric(df[found_col], errors="coerce")
+
+    if prices.empty:
+        return None
+
+    prices = prices.replace([np.inf, -np.inf], np.nan)
+    prices = prices.dropna(how="all")
+    prices = prices.ffill().dropna()
+
+    valid_assets = [asset for asset in assets if asset in prices.columns]
+
+    if len(valid_assets) < 2:
+        return None
+
+    return prices[valid_assets]
+
+
+def build_covariance_real(market_data, assets):
+    prices = extract_price_matrix(market_data, assets)
+
+    if prices is None or prices.empty:
+        return build_covariance_fallback(assets)
+
+    returns = prices.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
+
+    if len(returns) < 60:
+        return build_covariance_fallback(assets)
+
+    returns = returns.tail(LOOKBACK_DAYS)
+
+    realized_cov = returns.cov() * 252
+    realized_vol = returns.std() * np.sqrt(252)
+
+    cov = pd.DataFrame(
+        0.0,
+        index=assets,
+        columns=assets,
+    )
+
+    vol_fallback = get_vol_fallback()
+    corr_fallback = get_corr_fallback()
+
+    for a in assets:
+        for b in assets:
+            if a in realized_cov.index and b in realized_cov.columns:
+                value = realized_cov.loc[a, b]
+
+                if pd.notna(value):
+                    cov.loc[a, b] = float(value)
+                    continue
+
+            vol_a = vol_fallback.get(a, 0.25)
+            vol_b = vol_fallback.get(b, 0.25)
+
+            if a == b:
+                c = 1.0
+            else:
+                c = corr_fallback.get((a, b), corr_fallback.get((b, a), 0.25))
+
+            cov.loc[a, b] = vol_a * vol_b * c
+
+    vol_used = {}
+
+    for asset in assets:
+        if asset in realized_vol.index and pd.notna(realized_vol.loc[asset]):
+            vol_used[asset] = float(realized_vol.loc[asset])
+        else:
+            vol_used[asset] = vol_fallback.get(asset, 0.25)
+
+    return cov.to_numpy(dtype=float), vol_used, "COVARIANCE_REAL_252D"
 
 
 def classify_risk_budget(max_abs_contribution):
@@ -115,21 +220,17 @@ def classify_risk_budget(max_abs_contribution):
     return 35, "CRITICO"
 
 
-def run_risk_budget_engine(rebalance):
+def run_risk_budget_engine(rebalance, market_data=None):
     timestamp_utc = utc_now()
 
     positions_df = build_positions_df(rebalance)
 
-    vol_proxy = get_vol_proxy()
-    corr_proxy = get_correlation_proxy()
-
     assets = positions_df["ativo"].tolist()
     weights = positions_df["peso_atual"].to_numpy(dtype=float)
 
-    covariance_matrix = build_covariance_matrix(
+    covariance_matrix, vol_used, method = build_covariance_real(
+        market_data=market_data,
         assets=assets,
-        vol_proxy=vol_proxy,
-        corr_proxy=corr_proxy,
     )
 
     portfolio_variance = float(weights.T @ covariance_matrix @ weights)
@@ -150,21 +251,12 @@ def run_risk_budget_engine(rebalance):
     else:
         risk_contribution_abs_pct = np.zeros(len(weights))
 
-    positive_contribution = np.maximum(risk_contribution_raw, 0)
-    positive_sum = positive_contribution.sum()
-
-    if positive_sum > 0:
-        risk_contribution_positive_pct = positive_contribution / positive_sum
-    else:
-        risk_contribution_positive_pct = np.zeros(len(weights))
-
     hedge_flag = risk_contribution_raw < 0
 
-    positions_df["vol_proxy"] = positions_df["ativo"].map(vol_proxy).fillna(0.25)
+    positions_df["vol_realizada_ou_proxy"] = positions_df["ativo"].map(vol_used).fillna(0.25)
     positions_df["marginal_risk"] = marginal_risk
     positions_df["risk_contribution_raw"] = risk_contribution_raw
     positions_df["risk_contribution_abs_pct"] = risk_contribution_abs_pct
-    positions_df["risk_contribution_positive_pct"] = risk_contribution_positive_pct
     positions_df["hedge_flag"] = hedge_flag
 
     positions_df = positions_df.sort_values(
@@ -172,9 +264,7 @@ def run_risk_budget_engine(rebalance):
         ascending=False,
     )
 
-    max_risk_contribution = float(
-        positions_df["risk_contribution_abs_pct"].max()
-    )
+    max_risk_contribution = float(positions_df["risk_contribution_abs_pct"].max())
 
     top_asset = str(
         positions_df.iloc[0]["ativo"]
@@ -190,15 +280,15 @@ def run_risk_budget_engine(rebalance):
         "ativo",
         "valor_atual",
         "peso_atual",
-        "vol_proxy",
+        "vol_realizada_ou_proxy",
         "marginal_risk",
         "risk_contribution_raw",
         "risk_contribution_abs_pct",
-        "risk_contribution_positive_pct",
         "hedge_flag",
     ]].copy()
 
     risk_budget["timestamp_utc"] = timestamp_utc
+    risk_budget["method"] = method
 
     risk_budget_summary = pd.DataFrame([{
         "timestamp_utc": timestamp_utc,
@@ -208,7 +298,7 @@ def run_risk_budget_engine(rebalance):
         "risk_budget_level": risk_budget_level,
         "max_risk_contribution_pct": round(max_risk_contribution * 100, 2),
         "top_risk_asset": top_asset,
-        "method": "COVARIANCE_ABS_CONTRIBUTION",
+        "method": method,
     }])
 
     ensure_outputs_dir()
@@ -224,11 +314,11 @@ def run_risk_budget_engine(rebalance):
     )
 
     print("====================================================")
-    print("RISK BUDGET ENGINE — COVARIANCE ABS CONTRIBUTION")
+    print("RISK BUDGET ENGINE — REAL COVARIANCE V3")
     print("====================================================")
     print(f"Data UTC:              {timestamp_utc}")
-    print(f"Metodo:                COVARIANCE_ABS_CONTRIBUTION")
-    print(f"Portfolio Vol Proxy:   {portfolio_volatility:.2%}")
+    print(f"Metodo:                {method}")
+    print(f"Portfolio Vol:         {portfolio_volatility:.2%}")
     print(f"Top Risk Asset:        {top_asset}")
     print(f"Max Risk Contribution: {max_risk_contribution:.2%}")
     print(f"Risk Budget Score:     {risk_budget_score}")
@@ -237,7 +327,7 @@ def run_risk_budget_engine(rebalance):
     print(risk_budget[[
         "ativo",
         "peso_atual",
-        "vol_proxy",
+        "vol_realizada_ou_proxy",
         "risk_contribution_raw",
         "risk_contribution_abs_pct",
         "hedge_flag",
