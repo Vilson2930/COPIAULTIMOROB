@@ -114,16 +114,6 @@ def calculate_concentration_score(max_concentration):
 
 
 def calculate_jurisdiction_score(bucket_jurisdicoes_validas):
-    """
-    Jurisdição agora é penalidade graduada, não Kill Switch absoluto.
-
-    Critério:
-    - 3+ jurisdições válidas: excelente redundância operacional
-    - 2 jurisdições válidas: adequado
-    - 1 jurisdição válida: aceitável com ressalvas
-    - 0 jurisdições válidas: frágil
-    """
-
     if bucket_jurisdicoes_validas >= 3:
         return 100
     if bucket_jurisdicoes_validas == 2:
@@ -131,6 +121,44 @@ def calculate_jurisdiction_score(bucket_jurisdicoes_validas):
     if bucket_jurisdicoes_validas == 1:
         return 40
     return 0
+
+
+def normalize_operational_labels(access_map):
+    """
+    Ajuste institucional:
+    - BTC em autocustódia deve ser tratado como trilho/entidade operacional própria.
+    - Autocustódia reduz risco de exchange/custódia, mas não cria jurisdição regulatória tradicional.
+    - Portanto SELF_CUSTODY conta como trilho e entidade, mas só conta como jurisdição válida
+      se o access_map explicitamente marcar jurisdicao_valida = TRUE.
+    """
+
+    access_map = access_map.copy()
+
+    btc_mask = access_map["ativo"].eq("BTC-USD")
+
+    self_custody_terms = [
+        "SELF_CUSTODY",
+        "AUTOCUSTODIA",
+        "AUTO CUSTODIA",
+        "HARDWARE",
+        "LEDGER",
+        "TREZOR",
+        "COLD WALLET",
+        "COLD_WALLET",
+    ]
+
+    entity_upper = access_map["entidade"].astype(str).str.upper()
+    rail_upper = access_map["trilho"].astype(str).str.upper()
+
+    self_custody_mask = btc_mask & (
+        entity_upper.apply(lambda x: any(term in x for term in self_custody_terms))
+        | rail_upper.apply(lambda x: any(term in x for term in self_custody_terms))
+    )
+
+    access_map.loc[self_custody_mask, "trilho"] = "Autocustodia"
+    access_map.loc[self_custody_mask, "entidade"] = "SELF_CUSTODY"
+
+    return access_map
 
 
 def classify_survival(metrics):
@@ -152,15 +180,17 @@ def classify_survival(metrics):
     if metrics["bucket_entidades"] < 2:
         kill_reasons.append("MENOS_DE_2_ENTIDADES")
         required_evidence.append(
-            "Distribuir bucket entre no mínimo 2 entidades jurídicas."
+            "Distribuir bucket entre no mínimo 2 entidades jurídicas ou operacionais."
         )
 
-    # Ajuste de calibração:
-    # Antes, menos de 2 jurisdições válidas acionava Kill Switch.
-    # Agora, jurisdição única gera ressalva operacional, mas não reprovação automática.
     if metrics["bucket_jurisdicoes_validas"] < 2:
         required_evidence.append(
             "Adicionar segunda jurisdição válida para aumentar redundância operacional."
+        )
+
+    if metrics["self_custody_value_pct"] > 0.50:
+        required_evidence.append(
+            "Autocustódia acima de 50%: manter plano formal de backup, herança e recuperação de chaves."
         )
 
     if metrics["max_bucket_concentration"] > 0.90:
@@ -215,10 +245,11 @@ def run_operational_risk(
 
     access_map = load_access_map(access_map_path)
     access_map = normalize_access_map(access_map)
+    access_map = normalize_operational_labels(access_map)
 
     positions_df = build_positions_df(rebalance)
 
-    total_portfolio_value = positions_df["valor_atual"].sum()
+    total_portfolio_value = float(positions_df["valor_atual"].sum())
 
     active_access_map = access_map[
         access_map["status"] == "ATIVO"
@@ -232,7 +263,7 @@ def run_operational_risk(
         positions_df["ativo"].isin(survival_assets["ativo"])
     ].copy()
 
-    bucket_value = bucket_positions["valor_atual"].sum()
+    bucket_value = float(bucket_positions["valor_atual"].sum())
 
     runway_months = (
         bucket_value / monthly_expense_usd
@@ -252,6 +283,23 @@ def run_operational_risk(
         on="ativo",
         how="left",
     )
+
+    all_detail = positions_df.merge(
+        active_access_map,
+        on="ativo",
+        how="left",
+    )
+
+    if total_portfolio_value > 0 and not all_detail.empty:
+        self_custody_value = float(
+            all_detail[
+                all_detail["entidade"].astype(str).str.upper().eq("SELF_CUSTODY")
+            ]["valor_atual"].sum()
+        )
+        self_custody_value_pct = self_custody_value / total_portfolio_value
+    else:
+        self_custody_value = 0.0
+        self_custody_value_pct = 0.0
 
     if bucket_value > 0 and not bucket_detail.empty:
         max_trilho_concentration = float(
@@ -298,6 +346,7 @@ def run_operational_risk(
         "bucket_entidades": bucket_entidades,
         "bucket_jurisdicoes_validas": bucket_jurisdicoes_validas,
         "max_bucket_concentration": max_bucket_concentration,
+        "self_custody_value_pct": self_custody_value_pct,
         "survival_score": survival_score,
     }
 
@@ -320,6 +369,8 @@ def run_operational_risk(
         "bucket_trilhos": bucket_trilhos,
         "bucket_entidades": bucket_entidades,
         "bucket_jurisdicoes_validas": bucket_jurisdicoes_validas,
+        "self_custody_value_usd": self_custody_value,
+        "self_custody_value_pct": self_custody_value_pct,
         "max_trilho_concentration": max_trilho_concentration,
         "max_entidade_concentration": max_entidade_concentration,
         "max_jurisdiction_concentration": max_jurisdiction_concentration,
@@ -346,7 +397,7 @@ def run_operational_risk(
     )
 
     print("====================================================")
-    print("OPERATIONAL RISK ENGINE — SURVIVAL V2")
+    print("OPERATIONAL RISK ENGINE — SURVIVAL V3")
     print("====================================================")
     print(f"Data UTC:                   {timestamp_utc}")
     print(f"Valor total carteira:       US${total_portfolio_value:,.2f}")
@@ -356,6 +407,7 @@ def run_operational_risk(
     print(f"Bucket trilhos:             {bucket_trilhos}")
     print(f"Bucket entidades:           {bucket_entidades}")
     print(f"Bucket jurisdições válidas: {bucket_jurisdicoes_validas}")
+    print(f"Autocustódia total:         {self_custody_value_pct:.2%}")
     print(f"Concentração máxima bucket: {max_bucket_concentration:.2%}")
     print("----------------------------------------------------")
     print(f"Survival Score:             {survival_score:.2f}")
