@@ -124,14 +124,30 @@ def run_stress_engine(
             "INDA": -0.15,
             "ttr": "24-60",
         },
-        "CHOQUE_REGULATORIO_CUSTODIA": {
+
+        # Choque regulatório de preço/liquidez cripto.
+        # Com BTC em SELF_CUSTODY, este cenário não deve gerar forced selling automático.
+        "CHOQUE_REGULATORIO_CRIPTO": {
             "BTC-USD": -0.35,
-            "USDT-USD": -0.20,
+            "USDT-USD": -0.10,
             "GLD": 0.00,
             "VOO": -0.05,
             "TLT": -0.03,
             "BOTZ": -0.10,
             "INDA": -0.05,
+            "ttr": "12-36",
+        },
+
+        # Choque específico de stablecoin/custódia.
+        # Forced selling só ocorre se USDT for relevante demais ou runway ficar baixo.
+        "CHOQUE_STABLECOIN_CUSTODIA": {
+            "BTC-USD": -0.10,
+            "USDT-USD": -0.30,
+            "GLD": 0.00,
+            "VOO": -0.03,
+            "TLT": -0.02,
+            "BOTZ": -0.05,
+            "INDA": -0.03,
             "ttr": "indefinido",
         },
     }
@@ -148,15 +164,18 @@ def run_stress_engine(
         ttr_range = shocks["ttr"]
 
         forced_selling = False
+        forced_selling_reason = ""
 
         if runway_months < 12:
             forced_selling = True
+            forced_selling_reason = "RUNWAY_INFERIOR_12_MESES"
 
-        if scenario == "CHOQUE_REGULATORIO_CUSTODIA":
+        if scenario == "CHOQUE_STABLECOIN_CUSTODIA":
             usdt_weight = weights.get("USDT-USD", 0.0)
 
-            if usdt_weight > 0.15:
+            if usdt_weight > 0.30:
                 forced_selling = True
+                forced_selling_reason = "USDT_ACIMA_30_PCT_EM_CHOQUE_CUSTODIA"
 
         color = classify_color(
             drawdown_pct=drawdown_pct,
@@ -170,6 +189,7 @@ def run_stress_engine(
             "drawdown_pct": round(drawdown_pct, 2),
             "ttr_estimado_meses": ttr_range,
             "forced_selling": forced_selling,
+            "forced_selling_reason": forced_selling_reason,
             "cor": color,
             "runway_meses": round(runway_months, 1),
         })
@@ -221,7 +241,7 @@ def run_stress_engine(
     )
 
     print("====================================================")
-    print("STRESS ENGINE — TTR + FORCED SELLING V2")
+    print("STRESS ENGINE — TTR + FORCED SELLING V3")
     print("====================================================")
     print(f"Data UTC:              {timestamp_utc}")
     print(f"Valor total carteira:  US${total_value:,.2f}")
