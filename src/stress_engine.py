@@ -47,8 +47,11 @@ def ttr_midpoint(ttr_range):
     return (float(low) + float(high)) / 2
 
 
-def classify_color(drawdown_pct, ttr_range, forced_selling):
+def classify_color(drawdown_pct, ttr_range, forced_selling, permanent_impairment=False):
     if forced_selling:
+        return "VERMELHO"
+
+    if permanent_impairment:
         return "VERMELHO"
 
     ttr_mid = ttr_midpoint(ttr_range)
@@ -63,16 +66,6 @@ def classify_color(drawdown_pct, ttr_range, forced_selling):
 
 
 def classify_stress_summary(max_drawdown, red_count, yellow_count, forced_selling_any):
-    """
-    V4: classificação menos binária e mais institucional.
-
-    Regra:
-    - Forced selling sempre é crítico.
-    - 2+ cenários vermelhos = crítico.
-    - 1 cenário vermelho sem forced selling = elevado/fragil, não crítico automático.
-    - Drawdown <= 35% sem forced selling = aceitável com ressalvas.
-    """
-
     if forced_selling_any:
         return 40, "CRITICO"
 
@@ -130,6 +123,7 @@ def run_stress_engine(
             "BOTZ": -0.55,
             "INDA": -0.50,
             "ttr": "24-60",
+            "permanent_impairment": False,
         },
         "2020_LIKE": {
             "BTC-USD": -0.50,
@@ -140,6 +134,7 @@ def run_stress_engine(
             "BOTZ": -0.45,
             "INDA": -0.40,
             "ttr": "6-18",
+            "permanent_impairment": False,
         },
         "2022_LIKE": {
             "BTC-USD": -0.60,
@@ -150,6 +145,7 @@ def run_stress_engine(
             "BOTZ": -0.45,
             "INDA": -0.20,
             "ttr": "12-36",
+            "permanent_impairment": False,
         },
         "CRIPTO_INVERNO": {
             "BTC-USD": -0.75,
@@ -160,6 +156,7 @@ def run_stress_engine(
             "BOTZ": -0.25,
             "INDA": -0.15,
             "ttr": "24-60",
+            "permanent_impairment": False,
         },
         "CHOQUE_REGULATORIO_CRIPTO": {
             "BTC-USD": -0.35,
@@ -170,7 +167,12 @@ def run_stress_engine(
             "BOTZ": -0.10,
             "INDA": -0.05,
             "ttr": "12-36",
+            "permanent_impairment": False,
         },
+
+        # V5:
+        # Não usar TTR indefinido automaticamente.
+        # Se USDT <= 30% e não há forced selling, é choque severo mas controlado.
         "CHOQUE_STABLECOIN_CUSTODIA": {
             "BTC-USD": -0.10,
             "USDT-USD": -0.30,
@@ -179,7 +181,8 @@ def run_stress_engine(
             "TLT": -0.02,
             "BOTZ": -0.05,
             "INDA": -0.03,
-            "ttr": "indefinido",
+            "ttr": "12-36",
+            "permanent_impairment": False,
         },
     }
 
@@ -196,6 +199,7 @@ def run_stress_engine(
 
         forced_selling = False
         forced_selling_reason = ""
+        permanent_impairment = bool(shocks.get("permanent_impairment", False))
 
         if runway_months < 12:
             forced_selling = True
@@ -207,11 +211,14 @@ def run_stress_engine(
             if usdt_weight > 0.30:
                 forced_selling = True
                 forced_selling_reason = "USDT_ACIMA_30_PCT_EM_CHOQUE_CUSTODIA"
+                permanent_impairment = True
+                ttr_range = "indefinido"
 
         color = classify_color(
             drawdown_pct=drawdown_pct,
             ttr_range=ttr_range,
             forced_selling=forced_selling,
+            permanent_impairment=permanent_impairment,
         )
 
         rows.append({
@@ -221,6 +228,7 @@ def run_stress_engine(
             "ttr_estimado_meses": ttr_range,
             "forced_selling": forced_selling,
             "forced_selling_reason": forced_selling_reason,
+            "permanent_impairment": permanent_impairment,
             "cor": color,
             "runway_meses": round(runway_months, 1),
         })
@@ -266,7 +274,7 @@ def run_stress_engine(
     )
 
     print("====================================================")
-    print("STRESS ENGINE — TTR + FORCED SELLING V4")
+    print("STRESS ENGINE — TTR + FORCED SELLING V5")
     print("====================================================")
     print(f"Data UTC:              {timestamp_utc}")
     print(f"Valor total carteira:  US${total_value:,.2f}")
@@ -277,6 +285,7 @@ def run_stress_engine(
         "drawdown_pct",
         "ttr_estimado_meses",
         "forced_selling",
+        "permanent_impairment",
         "cor",
     ]].to_string(index=False))
     print("----------------------------------------------------")
