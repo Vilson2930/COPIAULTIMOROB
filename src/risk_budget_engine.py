@@ -102,14 +102,14 @@ def build_covariance_matrix(assets, vol_proxy, corr_proxy):
     return cov
 
 
-def classify_risk_budget(max_positive_contribution):
-    if max_positive_contribution <= 0.35:
+def classify_risk_budget(max_abs_contribution):
+    if max_abs_contribution <= 0.35:
         return 90, "ROBUSTO"
 
-    if max_positive_contribution <= 0.50:
+    if max_abs_contribution <= 0.50:
         return 75, "ACEITAVEL"
 
-    if max_positive_contribution <= 0.65:
+    if max_abs_contribution <= 0.65:
         return 55, "CONCENTRADO"
 
     return 35, "CRITICO"
@@ -142,26 +142,38 @@ def run_risk_budget_engine(rebalance):
     else:
         risk_contribution_raw = np.zeros(len(weights))
 
+    abs_contribution = np.abs(risk_contribution_raw)
+    abs_sum = abs_contribution.sum()
+
+    if abs_sum > 0:
+        risk_contribution_abs_pct = abs_contribution / abs_sum
+    else:
+        risk_contribution_abs_pct = np.zeros(len(weights))
+
     positive_contribution = np.maximum(risk_contribution_raw, 0)
     positive_sum = positive_contribution.sum()
 
     if positive_sum > 0:
-        risk_contribution_positive_norm = positive_contribution / positive_sum
+        risk_contribution_positive_pct = positive_contribution / positive_sum
     else:
-        risk_contribution_positive_norm = np.zeros(len(weights))
+        risk_contribution_positive_pct = np.zeros(len(weights))
+
+    hedge_flag = risk_contribution_raw < 0
 
     positions_df["vol_proxy"] = positions_df["ativo"].map(vol_proxy).fillna(0.25)
     positions_df["marginal_risk"] = marginal_risk
     positions_df["risk_contribution_raw"] = risk_contribution_raw
-    positions_df["risk_contribution_pct"] = risk_contribution_positive_norm
+    positions_df["risk_contribution_abs_pct"] = risk_contribution_abs_pct
+    positions_df["risk_contribution_positive_pct"] = risk_contribution_positive_pct
+    positions_df["hedge_flag"] = hedge_flag
 
     positions_df = positions_df.sort_values(
-        "risk_contribution_pct",
+        "risk_contribution_abs_pct",
         ascending=False,
     )
 
     max_risk_contribution = float(
-        positions_df["risk_contribution_pct"].max()
+        positions_df["risk_contribution_abs_pct"].max()
     )
 
     top_asset = str(
@@ -181,7 +193,9 @@ def run_risk_budget_engine(rebalance):
         "vol_proxy",
         "marginal_risk",
         "risk_contribution_raw",
-        "risk_contribution_pct",
+        "risk_contribution_abs_pct",
+        "risk_contribution_positive_pct",
+        "hedge_flag",
     ]].copy()
 
     risk_budget["timestamp_utc"] = timestamp_utc
@@ -194,7 +208,7 @@ def run_risk_budget_engine(rebalance):
         "risk_budget_level": risk_budget_level,
         "max_risk_contribution_pct": round(max_risk_contribution * 100, 2),
         "top_risk_asset": top_asset,
-        "method": "COVARIANCE_PROXY",
+        "method": "COVARIANCE_ABS_CONTRIBUTION",
     }])
 
     ensure_outputs_dir()
@@ -210,10 +224,10 @@ def run_risk_budget_engine(rebalance):
     )
 
     print("====================================================")
-    print("RISK BUDGET ENGINE — COVARIANCE PROXY")
+    print("RISK BUDGET ENGINE — COVARIANCE ABS CONTRIBUTION")
     print("====================================================")
     print(f"Data UTC:              {timestamp_utc}")
-    print(f"Metodo:                COVARIANCE_PROXY")
+    print(f"Metodo:                COVARIANCE_ABS_CONTRIBUTION")
     print(f"Portfolio Vol Proxy:   {portfolio_volatility:.2%}")
     print(f"Top Risk Asset:        {top_asset}")
     print(f"Max Risk Contribution: {max_risk_contribution:.2%}")
@@ -225,7 +239,8 @@ def run_risk_budget_engine(rebalance):
         "peso_atual",
         "vol_proxy",
         "risk_contribution_raw",
-        "risk_contribution_pct",
+        "risk_contribution_abs_pct",
+        "hedge_flag",
     ]].to_string(index=False))
     print("====================================================")
 
