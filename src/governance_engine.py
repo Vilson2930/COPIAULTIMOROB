@@ -471,12 +471,40 @@ def run_integrated_risk_committee(
     if counterparty_score < 60:
         critical_flags.append("COUNTERPARTY_FRAGIL")
 
-    if survival_kill_switch or ruin_risk == "ALTO":
+    hard_failure = (
+        survival_kill_switch
+        or ruin_risk == "ALTO"
+    )
+
+    hard_elevated = (
+        forced_selling_any
+        or stress_level in ["CRITICO", "CRITICA"]
+        or liquidity_score < 50
+        or counterparty_score < 50
+    )
+
+    concentration_with_fragility = (
+        risk_budget_score < 50
+        and (
+            stress_score < 55
+            or liquidity_score < 70
+            or counterparty_score < 70
+            or future_regime in ["CONTRACAO", "NEUTRO_FRAGIL"]
+        )
+    )
+
+    concentration_only = (
+        risk_budget_score < 50
+        and not hard_elevated
+        and not concentration_with_fragility
+    )
+
+    if hard_failure:
         integrated_risk_level = "CRITICO"
-    elif forced_selling_any or stress_level in ["CRITICO", "CRITICA"]:
+    elif hard_elevated or concentration_with_fragility:
         integrated_risk_level = "ELEVADO"
-    elif risk_budget_score < 50 or liquidity_score < 50 or counterparty_score < 50:
-        integrated_risk_level = "ELEVADO"
+    elif concentration_only:
+        integrated_risk_level = "MODERADO"
     elif integrated_risk_score >= 85:
         integrated_risk_level = "BAIXO"
     elif integrated_risk_score >= 70:
