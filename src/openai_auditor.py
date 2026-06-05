@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 from datetime import datetime, timezone
@@ -26,6 +27,13 @@ def read_latest(path):
         return {}
 
 
+def safe_json_loads(text):
+    try:
+        return json.loads(text)
+    except Exception:
+        return None
+
+
 def build_audit_payload():
     files = {
         "committee": "outputs/risk_committee_integrated.csv",
@@ -37,12 +45,39 @@ def build_audit_payload():
         "ai_audit": "outputs/ai_audit_summary.csv",
     }
 
-    payload = {}
+    return {name: read_latest(path) for name, path in files.items()}
 
-    for name, path in files.items():
-        payload[name] = read_latest(path)
 
-    return payload
+def fallback_result(status, text):
+    timestamp = utc_now()
+
+    summary = pd.DataFrame([{
+        "timestamp_utc": timestamp,
+        "openai_audit_status": status,
+        "audit_verdict": "N/D",
+        "audit_score": 0,
+        "audit_confidence": 0,
+        "severity": "N/D",
+        "root_cause": "N/D",
+        "material_inconsistency": "N/D",
+        "false_positive_risk": "N/D",
+        "false_negative_risk": "N/D",
+        "executive_summary": text,
+    }])
+
+    report = pd.DataFrame([{
+        "timestamp_utc": timestamp,
+        "openai_audit_status": status,
+        "openai_audit_text": text,
+    }])
+
+    summary.to_csv("outputs/openai_audit_summary.csv", index=False)
+    report.to_csv("outputs/openai_audit_report.csv", index=False)
+
+    return {
+        "openai_audit_summary": summary,
+        "openai_audit_report": report,
+    }
 
 
 def run_openai_auditor():
@@ -52,43 +87,63 @@ def run_openai_auditor():
 
     if not api_key:
         text = "OPENAI_API_KEY ausente. Auditoria OpenAI não executada."
-        result = pd.DataFrame([{
-            "timestamp_utc": utc_now(),
-            "openai_audit_status": "NAO_EXECUTADO",
-            "openai_audit_text": text,
-        }])
-        result.to_csv("outputs/openai_audit_report.csv", index=False)
         print(text)
-        return {"openai_audit_report": result}
+        return fallback_result("NAO_EXECUTADO", text)
 
     payload = build_audit_payload()
 
     prompt = f"""
 Você é um auditor institucional de risco e governança.
 
-Sua função é avaliar se o robô de investimentos agiu de forma coerente.
-Você NÃO deve recomendar ordens de compra ou venda.
-Você NÃO deve substituir o Governance Engine.
-Você deve apenas auditar a decisão e explicar a causa raiz.
+Sua função:
+- Auditar se o robô agiu de forma coerente.
+- NÃO recomendar ordens de compra ou venda.
+- NÃO substituir o Governance Engine.
+- Procurar inconsistências entre motores.
+- Explicar causa raiz e risco de falso positivo/falso negativo.
 
 Dados dos motores:
 {payload}
 
-Responda em português, com estrutura:
+Responda APENAS em JSON válido, sem markdown, no formato exato:
 
-1. VEREDITO DA AUDITORIA
-2. CAUSA RAIZ
-3. COERÊNCIA ENTRE MOTORES
-4. POSSÍVEIS INCONSISTÊNCIAS
-5. RISCO DE FALSO POSITIVO OU FALSO NEGATIVO
-6. RECOMENDAÇÃO DE GOVERNANÇA
-7. CONCLUSÃO FINAL
+{{
+  "audit_verdict": "COERENTE | INCONSISTENTE | COERENTE_COM_RESSALVAS",
+  "audit_score": 0,
+  "audit_confidence": 0,
+  "severity": "BAIXA | MEDIA | ALTA | CRITICA",
+  "root_cause": "texto curto",
+  "material_inconsistency": true,
+  "false_positive_risk": "BAIXO | MEDIO | ALTO",
+  "false_negative_risk": "BAIXO | MEDIO | ALTO",
+  "executive_summary": "resumo executivo em até 120 palavras",
+  "engine_consistency": {{
+    "survival": "comentário curto",
+    "stress": "comentário curto",
+    "risk_budget": "comentário curto",
+    "liquidity": "comentário curto",
+    "counterparty": "comentário curto",
+    "governance": "comentário curto"
+  }},
+  "main_evidences": [
+    "evidência 1",
+    "evidência 2",
+    "evidência 3"
+  ],
+  "concerns": [
+    "preocupação 1",
+    "preocupação 2"
+  ],
+  "governance_recommendation": "recomendação de governança, sem ordem de compra/venda",
+  "final_opinion": "parecer final"
+}}
 
-Se não houver inconsistências, diga explicitamente:
-"Nenhuma inconsistência material identificada."
-
-Se houver falha operacional, explique se ela decorre de runway, kill switch,
-forced selling, liquidez, contraparte ou risk budget.
+Regras:
+- audit_score deve ser de 0 a 100.
+- audit_confidence deve ser de 0 a 100.
+- Se não houver inconsistência material, material_inconsistency deve ser false.
+- Se os motores estiverem coerentes, use audit_verdict = "COERENTE".
+- Não invente dados que não estejam no payload.
 """
 
     try:
@@ -97,31 +152,84 @@ forced selling, liquidez, contraparte ou risk budget.
         response = client.responses.create(
             model="gpt-4.1-mini",
             input=prompt,
-            temperature=0.1,
+            temperature=0.0,
         )
 
-        text = response.output_text
-        status = "EXECUTADO"
+        raw_text = response.output_text.strip()
+        parsed = safe_json_loads(raw_text)
+
+        if parsed is None:
+            status = "ERRO_PARSE_JSON"
+            text = raw_text
+            return fallback_result(status, text)
+
+        timestamp = utc_now()
+
+        summary = pd.DataFrame([{
+            "timestamp_utc": timestamp,
+            "openai_audit_status": "EXECUTADO",
+            "audit_verdict": parsed.get("audit_verdict", "N/D"),
+            "audit_score": parsed.get("audit_score", 0),
+            "audit_confidence": parsed.get("audit_confidence", 0),
+            "severity": parsed.get("severity", "N/D"),
+            "root_cause": parsed.get("root_cause", "N/D"),
+            "material_inconsistency": parsed.get("material_inconsistency", "N/D"),
+            "false_positive_risk": parsed.get("false_positive_risk", "N/D"),
+            "false_negative_risk": parsed.get("false_negative_risk", "N/D"),
+            "executive_summary": parsed.get("executive_summary", "N/D"),
+            "governance_recommendation": parsed.get(
+                "governance_recommendation",
+                "N/D",
+            ),
+            "final_opinion": parsed.get("final_opinion", "N/D"),
+        }])
+
+        details = pd.DataFrame([{
+            "timestamp_utc": timestamp,
+            "engine_consistency": json.dumps(
+                parsed.get("engine_consistency", {}),
+                ensure_ascii=False,
+            ),
+            "main_evidences": json.dumps(
+                parsed.get("main_evidences", []),
+                ensure_ascii=False,
+            ),
+            "concerns": json.dumps(
+                parsed.get("concerns", []),
+                ensure_ascii=False,
+            ),
+        }])
+
+        report = pd.DataFrame([{
+            "timestamp_utc": timestamp,
+            "openai_audit_status": "EXECUTADO",
+            "openai_audit_text": raw_text,
+        }])
+
+        summary.to_csv("outputs/openai_audit_summary.csv", index=False)
+        details.to_csv("outputs/openai_audit_details.csv", index=False)
+        report.to_csv("outputs/openai_audit_report.csv", index=False)
+
+        print("====================================================")
+        print("OPENAI AUDITOR — STRUCTURED REVIEW")
+        print("====================================================")
+        print(f"Status:              EXECUTADO")
+        print(f"Audit Verdict:       {summary.iloc[-1]['audit_verdict']}")
+        print(f"Audit Score:         {summary.iloc[-1]['audit_score']}")
+        print(f"Confidence:          {summary.iloc[-1]['audit_confidence']}")
+        print(f"Severity:            {summary.iloc[-1]['severity']}")
+        print(f"Root Cause:          {summary.iloc[-1]['root_cause']}")
+        print("----------------------------------------------------")
+        print(summary.iloc[-1]["executive_summary"])
+        print("====================================================")
+
+        return {
+            "openai_audit_summary": summary,
+            "openai_audit_details": details,
+            "openai_audit_report": report,
+        }
 
     except Exception as e:
         text = f"Falha ao executar OpenAI Auditor: {e}"
-        status = "ERRO"
-
-    result = pd.DataFrame([{
-        "timestamp_utc": utc_now(),
-        "openai_audit_status": status,
-        "openai_audit_text": text,
-    }])
-
-    result.to_csv("outputs/openai_audit_report.csv", index=False)
-
-    print("====================================================")
-    print("OPENAI AUDITOR — QUALITATIVE REVIEW")
-    print("====================================================")
-    print(f"Status: {status}")
-    print(text[:1500])
-    print("====================================================")
-
-    return {
-        "openai_audit_report": result,
-    }
+        print(text)
+        return fallback_result("ERRO", text)
