@@ -208,13 +208,16 @@ def build_covariance_real(market_data, assets):
 
 
 def classify_risk_budget(max_abs_contribution):
-    if max_abs_contribution <= 0.35:
-        return 90, "ROBUSTO"
+    if max_abs_contribution <= 0.25:
+        return 95, "EXCELENTE"
 
-    if max_abs_contribution <= 0.50:
-        return 75, "ACEITAVEL"
+    if max_abs_contribution <= 0.40:
+        return 85, "ROBUSTO"
 
-    if max_abs_contribution <= 0.65:
+    if max_abs_contribution <= 0.55:
+        return 70, "ACEITAVEL"
+
+    if max_abs_contribution <= 0.75:
         return 55, "CONCENTRADO"
 
     return 35, "CRITICO"
@@ -314,7 +317,7 @@ def run_risk_budget_engine(rebalance, market_data=None):
     )
 
     print("====================================================")
-    print("RISK BUDGET ENGINE — REAL COVARIANCE V3")
+    print("RISK BUDGET ENGINE — REAL COVARIANCE V4")
     print("====================================================")
     print(f"Data UTC:              {timestamp_utc}")
     print(f"Metodo:                {method}")
