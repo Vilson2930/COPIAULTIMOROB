@@ -358,12 +358,30 @@ def run_committee_audit(
     return committee_audit
 
 
+def extract_optional_score(summary, column, default=100):
+    if summary is None or summary.empty:
+        return default
+
+    latest = summary.iloc[-1]
+
+    if column not in latest:
+        return default
+
+    try:
+        return float(latest[column])
+    except Exception:
+        return default
+
+
 def run_integrated_risk_committee(
     committee_audit,
     stress_summary,
     deterioration_audit,
     liquidity_forecast,
     survival_audit,
+    risk_budget_summary=None,
+    liquidity_summary=None,
+    counterparty_summary=None,
 ):
     timestamp_utc = utc_now()
 
@@ -379,6 +397,24 @@ def run_integrated_risk_committee(
     future_liquidity_score = float(liquidity_latest["future_liquidity_score"])
     survival_score = float(survival_latest["survival_score"])
 
+    risk_budget_score = extract_optional_score(
+        risk_budget_summary,
+        "risk_budget_score",
+        default=100,
+    )
+
+    liquidity_score = extract_optional_score(
+        liquidity_summary,
+        "liquidity_score",
+        default=100,
+    )
+
+    counterparty_score = extract_optional_score(
+        counterparty_summary,
+        "counterparty_score",
+        default=100,
+    )
+
     survival_kill_switch = bool(survival_latest["survival_kill_switch"])
     ruin_risk = str(survival_latest["ruin_risk"])
     future_regime = str(liquidity_latest["future_regime"])
@@ -393,11 +429,14 @@ def run_integrated_risk_committee(
     )
 
     integrated_risk_score = (
-        committee_score * 0.30
-        + stress_score * 0.25
-        + deterioration_score * 0.15
-        + future_liquidity_score * 0.15
+        committee_score * 0.20
+        + stress_score * 0.20
         + survival_score * 0.15
+        + deterioration_score * 0.10
+        + future_liquidity_score * 0.10
+        + risk_budget_score * 0.10
+        + liquidity_score * 0.075
+        + counterparty_score * 0.075
     )
 
     critical_flags = []
@@ -423,9 +462,20 @@ def run_integrated_risk_committee(
     if forced_selling_any:
         critical_flags.append("FORCED_SELLING_STRESS")
 
+    if risk_budget_score < 60:
+        critical_flags.append("RISK_BUDGET_CONCENTRADO")
+
+    if liquidity_score < 60:
+        critical_flags.append("LIQUIDITY_FRAGIL")
+
+    if counterparty_score < 60:
+        critical_flags.append("COUNTERPARTY_FRAGIL")
+
     if survival_kill_switch or ruin_risk == "ALTO":
         integrated_risk_level = "CRITICO"
     elif forced_selling_any or stress_level in ["CRITICO", "CRITICA"]:
+        integrated_risk_level = "ELEVADO"
+    elif risk_budget_score < 50 or liquidity_score < 50 or counterparty_score < 50:
         integrated_risk_level = "ELEVADO"
     elif integrated_risk_score >= 85:
         integrated_risk_level = "BAIXO"
@@ -463,6 +513,9 @@ def run_integrated_risk_committee(
         "deterioration_score": deterioration_score,
         "future_liquidity_score": future_liquidity_score,
         "survival_score": survival_score,
+        "risk_budget_score": risk_budget_score,
+        "liquidity_score": liquidity_score,
+        "counterparty_score": counterparty_score,
         "integrated_risk_score": integrated_risk_score,
         "integrated_risk_level": integrated_risk_level,
         "committee_action": committee_action,
@@ -659,6 +712,9 @@ def run_governance_engine(
     deterioration_audit,
     liquidity_forecast,
     stress_summary_override=None,
+    risk_budget_summary=None,
+    liquidity_summary=None,
+    counterparty_summary=None,
 ):
     audit_log_df, orders_log = build_audit_logs(
         latest=latest,
@@ -692,6 +748,9 @@ def run_governance_engine(
         deterioration_audit=deterioration_audit,
         liquidity_forecast=liquidity_forecast,
         survival_audit=survival_audit,
+        risk_budget_summary=risk_budget_summary,
+        liquidity_summary=liquidity_summary,
+        counterparty_summary=counterparty_summary,
     )
 
     final_opinion = run_final_opinion(
