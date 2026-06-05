@@ -86,7 +86,8 @@ def main():
     counterparty = counterparty_context["counterparty_summary"].iloc[-1]
     risk = governance_context["risk_committee_integrated"].iloc[-1]
     ai_audit = ai_audit_context["ai_audit_summary"].iloc[-1]
-    openai_audit = openai_audit_context["openai_audit_report"].iloc[-1]
+
+    openai_audit = openai_audit_context["openai_audit_summary"].iloc[-1]
 
     print_header("ULTIMOROBO — RESUMO EXECUTIVO FINAL")
 
@@ -141,7 +142,14 @@ def main():
     print(f"AI Audit Status:     {ai_audit['ai_audit_status']}")
     print(f"AI Audit Score:      {ai_audit['ai_audit_score']}")
     print(f"AI Root Cause:       {ai_audit['root_cause']}")
+
+    print("----------------------------------------------------")
     print(f"OpenAI Audit:        {openai_audit['openai_audit_status']}")
+    print(f"OpenAI Verdict:      {openai_audit['audit_verdict']}")
+    print(f"OpenAI Score:        {openai_audit['audit_score']}")
+    print(f"OpenAI Confidence:   {openai_audit['audit_confidence']}")
+    print(f"OpenAI Severity:     {openai_audit['severity']}")
+    print(f"OpenAI Root Cause:   {openai_audit['root_cause']}")
 
     print("====================================================")
     print("Relatórios gerados:")
@@ -160,6 +168,8 @@ def main():
     print("- outputs/counterparty_summary.csv")
     print("- outputs/ai_audit_summary.csv")
     print("- outputs/ai_audit_details.csv")
+    print("- outputs/openai_audit_summary.csv")
+    print("- outputs/openai_audit_details.csv")
     print("- outputs/openai_audit_report.csv")
     print("====================================================")
 
