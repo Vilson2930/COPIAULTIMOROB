@@ -1,3 +1,5 @@
+# src/liquidity_engine.py
+
 import os
 from datetime import datetime, timezone
 
@@ -130,7 +132,7 @@ def status_penalty(status):
     if s == "ATIVO":
         return 0.00
 
-    if s in ["LIMITADO", "RESTRITO", "ATENCAO", "ATENÇÃO"]:
+    if s in ["LIMITADO", "RESTRITO", "ATENCAO"]:
         return 0.25
 
     if s in ["BLOQUEADO", "SUSPENSO", "INATIVO"]:
@@ -220,9 +222,7 @@ def run_liquidity_engine(rebalance, access_map_path=ACCESS_MAP_PATH):
     )
 
     df["rail_haircut_pct"] = df["trilho"].apply(rail_haircut)
-    df["jurisdiction_haircut_pct"] = df["jurisdicao_valida"].apply(
-        jurisdiction_penalty
-    )
+    df["jurisdiction_haircut_pct"] = df["jurisdicao_valida"].apply(jurisdiction_penalty)
     df["status_penalty_pct"] = df["status"].apply(status_penalty)
     df["criticidade_penalty_pct"] = df["criticidade"].apply(criticidade_penalty)
 
@@ -282,7 +282,7 @@ def run_liquidity_engine(rebalance, access_map_path=ACCESS_MAP_PATH):
     if blocked_value > 0:
         critical_flags.append("ATIVO_COM_ACESSO_BLOQUEADO")
 
-    if gross_value > 0 and invalid_jurisdiction_value / gross_value > 0.50:
+    if invalid_jurisdiction_value / gross_value > 0.50:
         critical_flags.append("MAIS_DE_50_EM_JURISDICAO_NAO_VALIDA")
 
     if max_rail_concentration > 0.65:
@@ -317,23 +317,16 @@ def run_liquidity_engine(rebalance, access_map_path=ACCESS_MAP_PATH):
 
     liquidity_summary = pd.DataFrame([{
         "timestamp_utc": timestamp_utc,
-
-        # colunas antigas obrigatórias
         "gross_value": round(gross_value, 2),
-        "liquid_value": round(liquid_value, 2),
-        "aggregate_haircut_pct": round(aggregate_haircut_pct * 100, 2),
-
-        # colunas novas operacionais
         "operational_liquid_value": round(liquid_value, 2),
         "aggregate_operational_haircut_pct": round(aggregate_haircut_pct * 100, 2),
-
         "liquidity_score": liquidity_score,
         "liquidity_level": liquidity_level,
         "blocked_value": round(blocked_value, 2),
         "invalid_jurisdiction_value": round(invalid_jurisdiction_value, 2),
         "max_rail_concentration_pct": round(max_rail_concentration * 100, 2),
         "max_entity_concentration_pct": round(max_entity_concentration * 100, 2),
-        "critical_flags": " | ".join(critical_flags) if critical_flags else "",
+        "critical_flags": " | ".join(critical_flags),
     }])
 
     ensure_outputs_dir()
@@ -353,8 +346,8 @@ def run_liquidity_engine(rebalance, access_map_path=ACCESS_MAP_PATH):
     print("====================================================")
     print(f"Data UTC:                      {timestamp_utc}")
     print(f"Valor Bruto:                   US${gross_value:,.2f}")
-    print(f"Valor Liquido:                 US${liquid_value:,.2f}")
-    print(f"Haircut Agregado:              {aggregate_haircut_pct:.2%}")
+    print(f"Valor Líquido Operacional:     US${liquid_value:,.2f}")
+    print(f"Haircut Operacional Agregado:  {aggregate_haircut_pct:.2%}")
     print(f"Liquidity Score:               {liquidity_score}")
     print(f"Liquidity Level:               {liquidity_level}")
     print(f"Max Rail Concentration:        {max_rail_concentration:.2%}")
