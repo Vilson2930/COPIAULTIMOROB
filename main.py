@@ -1,5 +1,3 @@
-# main.py
-
 from src.data_engine import run_data_engine
 from src.macro_engine import run_macro_engine
 from src.portfolio_engine import run_portfolio_engine
@@ -9,6 +7,8 @@ from src.stress_engine import run_stress_engine
 from src.risk_budget_engine import run_risk_budget_engine
 from src.liquidity_engine import run_liquidity_engine
 from src.counterparty_engine import run_counterparty_engine
+from src.ai_auditor import run_ai_auditor
+from src.openai_auditor import run_openai_auditor
 
 
 def print_header(title):
@@ -43,7 +43,6 @@ def main():
         monthly_expense_usd=2000,
     )
 
-    # ALTERAÇÃO AQUI
     risk_budget_context = run_risk_budget_engine(
         rebalance=portfolio_context["rebalance"],
         market_data=data_context["market_data"],
@@ -76,6 +75,9 @@ def main():
         counterparty_summary=counterparty_context["counterparty_summary"],
     )
 
+    ai_audit_context = run_ai_auditor()
+    openai_audit_context = run_openai_auditor()
+
     latest = macro_context["latest"]
     survival = risk_context["survival_audit"].iloc[-1]
     stress = stress_context["stress_summary"].iloc[-1]
@@ -83,6 +85,8 @@ def main():
     liquidity = liquidity_context["liquidity_summary"].iloc[-1]
     counterparty = counterparty_context["counterparty_summary"].iloc[-1]
     risk = governance_context["risk_committee_integrated"].iloc[-1]
+    ai_audit = ai_audit_context["ai_audit_summary"].iloc[-1]
+    openai_audit = openai_audit_context["openai_audit_report"].iloc[-1]
 
     print_header("ULTIMOROBO — RESUMO EXECUTIVO FINAL")
 
@@ -115,8 +119,13 @@ def main():
 
     print("----------------------------------------------------")
     print(f"Liquidity Level:     {liquidity['liquidity_level']}")
-    print(f"Liquidity Score:     {liquidity['liquidity_score']}")
-    print(f"Haircut Agregado:    {float(liquidity['aggregate_haircut_pct']):.2f}%")
+    print(f"Liquidity Score:     {float(liquidity['liquidity_score']):.2f}")
+
+    haircut_agregado = liquidity.get(
+        "aggregate_haircut_pct",
+        liquidity.get("aggregate_operational_haircut_pct", 0),
+    )
+    print(f"Haircut Agregado:    {float(haircut_agregado):.2f}%")
 
     print("----------------------------------------------------")
     print(f"Counterparty Level:  {counterparty['counterparty_level']}")
@@ -127,6 +136,12 @@ def main():
     print(f"Comitê:              {risk['integrated_risk_level']}")
     print(f"Ação:                {risk['committee_action']}")
     print(f"VEREDITO FINAL:      {risk['final_verdict']}")
+
+    print("----------------------------------------------------")
+    print(f"AI Audit Status:     {ai_audit['ai_audit_status']}")
+    print(f"AI Audit Score:      {ai_audit['ai_audit_score']}")
+    print(f"AI Root Cause:       {ai_audit['root_cause']}")
+    print(f"OpenAI Audit:        {openai_audit['openai_audit_status']}")
 
     print("====================================================")
     print("Relatórios gerados:")
@@ -143,6 +158,9 @@ def main():
     print("- outputs/liquidity_summary.csv")
     print("- outputs/counterparty_audit.csv")
     print("- outputs/counterparty_summary.csv")
+    print("- outputs/ai_audit_summary.csv")
+    print("- outputs/ai_audit_details.csv")
+    print("- outputs/openai_audit_report.csv")
     print("====================================================")
 
     return {
@@ -155,6 +173,8 @@ def main():
         "liquidity": liquidity_context,
         "counterparty": counterparty_context,
         "governance": governance_context,
+        "ai_audit": ai_audit_context,
+        "openai_audit": openai_audit_context,
     }
 
 
