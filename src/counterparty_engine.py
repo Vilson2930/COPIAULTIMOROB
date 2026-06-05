@@ -26,16 +26,30 @@ def build_positions_df(rebalance):
     if "ativo" not in positions_df.columns:
         positions_df = positions_df.rename(columns={positions_df.columns[0]: "ativo"})
 
-    positions_df["ativo"] = positions_df["ativo"].astype(str)
+    required_columns = ["ativo", "valor_atual"]
+    missing = [col for col in required_columns if col not in positions_df.columns]
+
+    if missing:
+        raise ValueError(f"rebalance com colunas ausentes: {missing}")
+
+    positions_df["ativo"] = positions_df["ativo"].astype(str).str.strip()
     positions_df["valor_atual"] = positions_df["valor_atual"].astype(float)
 
     return positions_df
 
 
 def get_counterparty_map():
+    """
+    Mapa de contraparte/custódia.
+
+    Observação importante:
+    - BTC-USD foi alterado de BINANCE para SELF_CUSTODY.
+    - Isso corrige o risco de contraparte/custódia.
+    - Isso NÃO altera o risco de mercado do BTC no Risk Budget Engine.
+    """
 
     return {
-        "BTC-USD": ("BINANCE", 70),
+        "BTC-USD": ("SELF_CUSTODY", 95),
         "USDT-USD": ("TETHER", 65),
         "VOO": ("BLACKROCK", 98),
         "TLT": ("BLACKROCK", 98),
@@ -46,7 +60,6 @@ def get_counterparty_map():
 
 
 def classify_counterparty_score(score):
-
     if score >= 90:
         return "ROBUSTO"
 
@@ -59,8 +72,20 @@ def classify_counterparty_score(score):
     return "CRITICO"
 
 
-def run_counterparty_engine(rebalance):
+def classify_concentration(max_exposure_pct):
+    if max_exposure_pct <= 0.35:
+        return "ROBUSTA"
 
+    if max_exposure_pct <= 0.50:
+        return "ACEITAVEL"
+
+    if max_exposure_pct <= 0.65:
+        return "CONCENTRADA"
+
+    return "CRITICA"
+
+
+def run_counterparty_engine(rebalance):
     timestamp_utc = utc_now()
 
     positions_df = build_positions_df(rebalance)
@@ -75,9 +100,12 @@ def run_counterparty_engine(rebalance):
         lambda x: cp_map.get(x, ("OUTROS", 75))[1]
     )
 
-    total_value = positions_df["valor_atual"].sum()
+    total_value = float(positions_df["valor_atual"].sum())
 
-    cp_exposure = (
+    if total_value <= 0:
+        raise ValueError("Valor total da carteira inválido para Counterparty Engine.")
+
+    counterparty_audit = (
         positions_df.groupby("counterparty", as_index=False)
         .agg(
             exposure_usd=("valor_atual", "sum"),
@@ -85,33 +113,60 @@ def run_counterparty_engine(rebalance):
         )
     )
 
-    cp_exposure["exposure_pct"] = (
-        cp_exposure["exposure_usd"] / total_value
+    counterparty_audit["exposure_pct"] = (
+        counterparty_audit["exposure_usd"] / total_value
     )
 
-    weighted_score = (
-        cp_exposure["avg_score"]
-        * cp_exposure["exposure_pct"]
-    ).sum()
-
-    counterparty_score = round(float(weighted_score), 2)
-
-    counterparty_level = classify_counterparty_score(
-        counterparty_score
+    counterparty_audit["weighted_score"] = (
+        counterparty_audit["avg_score"]
+        * counterparty_audit["exposure_pct"]
     )
 
-    largest_cp = cp_exposure.sort_values(
+    counterparty_score = round(
+        float(counterparty_audit["weighted_score"].sum()),
+        2,
+    )
+
+    counterparty_level = classify_counterparty_score(counterparty_score)
+
+    counterparty_audit = counterparty_audit.sort_values(
         "exposure_pct",
         ascending=False,
-    ).iloc[0]["counterparty"]
+    )
 
-    counterparty_audit = cp_exposure.copy()
+    largest_counterparty = str(counterparty_audit.iloc[0]["counterparty"])
+    largest_counterparty_exposure_pct = float(
+        counterparty_audit.iloc[0]["exposure_pct"]
+    )
+
+    concentration_level = classify_concentration(
+        largest_counterparty_exposure_pct
+    )
+
+    critical_flags = []
+
+    if counterparty_score < 60:
+        critical_flags.append("COUNTERPARTY_SCORE_CRITICO")
+
+    if largest_counterparty_exposure_pct > 0.50:
+        critical_flags.append("CONCENTRACAO_CONTRAPARTE_ACIMA_50")
+
+    if largest_counterparty_exposure_pct > 0.65:
+        critical_flags.append("CONCENTRACAO_CONTRAPARTE_ACIMA_65")
+
+    counterparty_audit["timestamp_utc"] = timestamp_utc
 
     counterparty_summary = pd.DataFrame([{
         "timestamp_utc": timestamp_utc,
         "counterparty_score": counterparty_score,
         "counterparty_level": counterparty_level,
-        "largest_counterparty": largest_cp,
+        "largest_counterparty": largest_counterparty,
+        "largest_counterparty_exposure_pct": round(
+            largest_counterparty_exposure_pct * 100,
+            2,
+        ),
+        "concentration_level": concentration_level,
+        "critical_flags": " | ".join(critical_flags),
     }])
 
     ensure_outputs_dir()
@@ -135,12 +190,26 @@ def run_counterparty_engine(rebalance):
     print("====================================================")
     print("COUNTERPARTY ENGINE")
     print("====================================================")
-    print(f"Data UTC:               {timestamp_utc}")
-    print(f"Counterparty Score:     {counterparty_score}")
-    print(f"Counterparty Level:     {counterparty_level}")
-    print(f"Maior Contraparte:      {largest_cp}")
+    print(f"Data UTC:                  {timestamp_utc}")
+    print(f"Counterparty Score:        {counterparty_score}")
+    print(f"Counterparty Level:        {counterparty_level}")
+    print(f"Maior Contraparte:         {largest_counterparty}")
+    print(f"Exposição Maior Contrap.:  {largest_counterparty_exposure_pct:.2%}")
+    print(f"Concentration Level:       {concentration_level}")
+
+    if critical_flags:
+        print(f"Critical Flags:            {' | '.join(critical_flags)}")
+    else:
+        print("Critical Flags:            Nenhuma")
+
     print("----------------------------------------------------")
-    print(cp_exposure.to_string(index=False))
+    print(counterparty_audit[[
+        "counterparty",
+        "exposure_usd",
+        "avg_score",
+        "exposure_pct",
+        "weighted_score",
+    ]].to_string(index=False))
     print("====================================================")
 
     return {
