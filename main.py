@@ -17,6 +17,16 @@ def print_header(title):
     print("====================================================")
 
 
+def safe_last(context, key):
+    try:
+        df = context.get(key)
+        if df is not None and not df.empty:
+            return df.iloc[-1]
+    except Exception:
+        pass
+    return {}
+
+
 def main():
     print_header("ULTIMOROBO — EXECUÇÃO INICIADA")
 
@@ -76,7 +86,19 @@ def main():
     )
 
     ai_audit_context = run_ai_auditor()
-    openai_audit_context = run_openai_auditor()
+
+    try:
+        openai_audit_context = run_openai_auditor()
+    except Exception as e:
+        print("====================================================")
+        print("OPENAI AUDITOR FALHOU — EXECUÇÃO CONTINUARÁ")
+        print("====================================================")
+        print(e)
+        openai_audit_context = {
+            "openai_audit_summary": None,
+            "openai_audit_details": None,
+            "openai_audit_report": None,
+        }
 
     latest = macro_context["latest"]
     survival = risk_context["survival_audit"].iloc[-1]
@@ -87,7 +109,10 @@ def main():
     risk = governance_context["risk_committee_integrated"].iloc[-1]
     ai_audit = ai_audit_context["ai_audit_summary"].iloc[-1]
 
-    openai_audit = openai_audit_context["openai_audit_summary"].iloc[-1]
+    openai_audit = safe_last(
+        openai_audit_context,
+        "openai_audit_summary",
+    )
 
     print_header("ULTIMOROBO — RESUMO EXECUTIVO FINAL")
 
@@ -144,12 +169,13 @@ def main():
     print(f"AI Root Cause:       {ai_audit['root_cause']}")
 
     print("----------------------------------------------------")
-    print(f"OpenAI Audit:        {openai_audit['openai_audit_status']}")
-    print(f"OpenAI Verdict:      {openai_audit['audit_verdict']}")
-    print(f"OpenAI Score:        {openai_audit['audit_score']}")
-    print(f"OpenAI Confidence:   {openai_audit['audit_confidence']}")
-    print(f"OpenAI Severity:     {openai_audit['severity']}")
-    print(f"OpenAI Root Cause:   {openai_audit['root_cause']}")
+    print(f"OpenAI Audit:        {openai_audit.get('openai_audit_status', 'NAO_EXECUTADO')}")
+    print(f"OpenAI Verdict:      {openai_audit.get('audit_verdict', 'N/D')}")
+    print(f"OpenAI Score:        {openai_audit.get('audit_score', 'N/D')}")
+    print(f"OpenAI Confidence:   {openai_audit.get('audit_confidence', 'N/D')}")
+    print(f"OpenAI Severity:     {openai_audit.get('severity', 'N/D')}")
+    print(f"OpenAI Root Cause:   {openai_audit.get('root_cause', 'N/D')}")
+    print(f"OpenAI Final Opinion:{openai_audit.get('final_opinion', 'N/D')}")
 
     print("====================================================")
     print("Relatórios gerados:")
