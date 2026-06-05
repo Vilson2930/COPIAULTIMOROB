@@ -547,10 +547,13 @@ def run_integrated_risk_committee(
     if hard_failure:
         integrated_risk_level = "CRITICO"
 
-    elif risk_budget_critical:
-        integrated_risk_level = "CRITICO"
+    elif hard_elevated:
+        integrated_risk_level = "ELEVADO"
 
-    elif hard_elevated or concentration_with_fragility:
+    elif risk_budget_critical:
+        integrated_risk_level = "ELEVADO"
+
+    elif concentration_with_fragility:
         integrated_risk_level = "ELEVADO"
 
     elif risk_budget_concentrated:
@@ -569,13 +572,13 @@ def run_integrated_risk_committee(
         integrated_risk_level = "CRITICO"
 
     if integrated_risk_level == "CRITICO":
-        if risk_budget_critical and not hard_failure:
-            committee_action = "REDUZIR_CONCENTRACAO_DE_RISCO_E_REVALIDAR"
-        else:
-            committee_action = "BLOQUEAR_RISCO_E_CORRIGIR_OPERACIONAL"
+        committee_action = "BLOQUEAR_RISCO_E_CORRIGIR_OPERACIONAL"
 
     elif integrated_risk_level == "ELEVADO":
-        committee_action = "REDUZIR_RISCO_E_REVALIDAR"
+        if risk_budget_critical:
+            committee_action = "REDUZIR_CONCENTRACAO_DE_RISCO_E_REVALIDAR"
+        else:
+            committee_action = "REDUZIR_RISCO_E_REVALIDAR"
 
     elif integrated_risk_level == "MODERADO":
         if risk_budget_concentrated:
