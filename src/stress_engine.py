@@ -48,10 +48,7 @@ def ttr_midpoint(ttr_range):
 
 
 def classify_color(drawdown_pct, ttr_range, forced_selling, permanent_impairment=False):
-    if forced_selling:
-        return "VERMELHO"
-
-    if permanent_impairment:
+    if forced_selling or permanent_impairment:
         return "VERMELHO"
 
     ttr_mid = ttr_midpoint(ttr_range)
@@ -169,10 +166,6 @@ def run_stress_engine(
             "ttr": "12-36",
             "permanent_impairment": False,
         },
-
-        # V5:
-        # Não usar TTR indefinido automaticamente.
-        # Se USDT <= 30% e não há forced selling, é choque severo mas controlado.
         "CHOQUE_STABLECOIN_CUSTODIA": {
             "BTC-USD": -0.10,
             "USDT-USD": -0.30,
@@ -207,12 +200,19 @@ def run_stress_engine(
 
         if scenario == "CHOQUE_STABLECOIN_CUSTODIA":
             usdt_weight = weights.get("USDT-USD", 0.0)
+            tlt_weight = weights.get("TLT", 0.0)
+            gld_weight = weights.get("GLD", 0.0)
 
-            if usdt_weight > 0.30:
-                forced_selling = True
-                forced_selling_reason = "USDT_ACIMA_30_PCT_EM_CHOQUE_CUSTODIA"
+            survival_weight = usdt_weight + tlt_weight + gld_weight
+            stablecoin_survival_ratio = usdt_weight / max(survival_weight, 0.0001)
+
+            if stablecoin_survival_ratio > 0.70:
                 permanent_impairment = True
                 ttr_range = "indefinido"
+
+                if runway_months < 12:
+                    forced_selling = True
+                    forced_selling_reason = "DEPENDENCIA_EXCESSIVA_DE_STABLECOIN"
 
         color = classify_color(
             drawdown_pct=drawdown_pct,
@@ -274,7 +274,7 @@ def run_stress_engine(
     )
 
     print("====================================================")
-    print("STRESS ENGINE — TTR + FORCED SELLING V5")
+    print("STRESS ENGINE — TTR + FORCED SELLING V6")
     print("====================================================")
     print(f"Data UTC:              {timestamp_utc}")
     print(f"Valor total carteira:  US${total_value:,.2f}")
