@@ -43,8 +43,10 @@ def main():
         monthly_expense_usd=2000,
     )
 
+    # ALTERAÇÃO AQUI
     risk_budget_context = run_risk_budget_engine(
         rebalance=portfolio_context["rebalance"],
+        market_data=data_context["market_data"],
     )
 
     liquidity_context = run_liquidity_engine(
