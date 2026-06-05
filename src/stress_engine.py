@@ -120,7 +120,6 @@ def run_stress_engine(
             "BOTZ": -0.55,
             "INDA": -0.50,
             "ttr": "24-60",
-            "permanent_impairment": False,
         },
         "2020_LIKE": {
             "BTC-USD": -0.50,
@@ -131,7 +130,6 @@ def run_stress_engine(
             "BOTZ": -0.45,
             "INDA": -0.40,
             "ttr": "6-18",
-            "permanent_impairment": False,
         },
         "2022_LIKE": {
             "BTC-USD": -0.60,
@@ -142,7 +140,6 @@ def run_stress_engine(
             "BOTZ": -0.45,
             "INDA": -0.20,
             "ttr": "12-36",
-            "permanent_impairment": False,
         },
         "CRIPTO_INVERNO": {
             "BTC-USD": -0.75,
@@ -153,7 +150,6 @@ def run_stress_engine(
             "BOTZ": -0.25,
             "INDA": -0.15,
             "ttr": "24-60",
-            "permanent_impairment": False,
         },
         "CHOQUE_REGULATORIO_CRIPTO": {
             "BTC-USD": -0.35,
@@ -164,7 +160,6 @@ def run_stress_engine(
             "BOTZ": -0.10,
             "INDA": -0.05,
             "ttr": "12-36",
-            "permanent_impairment": False,
         },
         "CHOQUE_STABLECOIN_CUSTODIA": {
             "BTC-USD": -0.10,
@@ -175,7 +170,6 @@ def run_stress_engine(
             "BOTZ": -0.05,
             "INDA": -0.03,
             "ttr": "12-36",
-            "permanent_impairment": False,
         },
     }
 
@@ -192,7 +186,7 @@ def run_stress_engine(
 
         forced_selling = False
         forced_selling_reason = ""
-        permanent_impairment = bool(shocks.get("permanent_impairment", False))
+        permanent_impairment = False
 
         if runway_months < 12:
             forced_selling = True
@@ -206,13 +200,13 @@ def run_stress_engine(
             survival_weight = usdt_weight + tlt_weight + gld_weight
             stablecoin_survival_ratio = usdt_weight / max(survival_weight, 0.0001)
 
-            if stablecoin_survival_ratio > 0.70:
+            if usdt_weight > 0.60 and stablecoin_survival_ratio > 0.80:
                 permanent_impairment = True
                 ttr_range = "indefinido"
 
                 if runway_months < 12:
                     forced_selling = True
-                    forced_selling_reason = "DEPENDENCIA_EXCESSIVA_DE_STABLECOIN"
+                    forced_selling_reason = "DEPENDENCIA_EXTREMA_DE_STABLECOIN"
 
         color = classify_color(
             drawdown_pct=drawdown_pct,
@@ -274,7 +268,7 @@ def run_stress_engine(
     )
 
     print("====================================================")
-    print("STRESS ENGINE — TTR + FORCED SELLING V6")
+    print("STRESS ENGINE — TTR + FORCED SELLING V7")
     print("====================================================")
     print(f"Data UTC:              {timestamp_utc}")
     print(f"Valor total carteira:  US${total_value:,.2f}")
