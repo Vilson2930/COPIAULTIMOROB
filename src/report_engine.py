@@ -33,7 +33,7 @@ def first_valid(*values, default="N/D"):
 
 def fmt(value, decimals=2, default="N/D"):
     try:
-        return f"{float(value):.{decimals}f}"
+        return f"{float(value):,.{decimals}f}"
     except Exception:
         return default
 
@@ -44,11 +44,11 @@ def is_true(value):
 
 def status_color(value):
     v = str(value).upper()
-    if any(x in v for x in ["REPROVADO", "CRITICO", "CRÍTICO", "ALTO", "FAIL", "BLOQUEAR"]):
+    if any(x in v for x in ["REPROVADO", "CRITICO", "CRÍTICO", "ALTO", "FAIL", "BLOQUEAR", "CRITICA", "CRÍTICA"]):
         return "#ef4444"
-    if any(x in v for x in ["RESSALVA", "MEDIO", "MÉDIO", "MODERADO", "ATENCAO", "ATENÇÃO", "FRAGIL", "FRÁGIL"]):
+    if any(x in v for x in ["RESSALVA", "MEDIO", "MÉDIO", "MODERADO", "ATENCAO", "ATENÇÃO", "FRAGIL", "FRÁGIL", "MEDIA", "MÉDIA"]):
         return "#facc15"
-    if any(x in v for x in ["APROVADO", "VALIDADO", "BAIXO", "NORMAL", "OK", "INSTITUCIONAL", "ROBUSTO", "ACEITAVEL"]):
+    if any(x in v for x in ["APROVADO", "VALIDADO", "BAIXO", "NORMAL", "OK", "INSTITUCIONAL", "ROBUSTO", "ACEITAVEL", "COERENTE"]):
         return "#22c55e"
     return "#38bdf8"
 
@@ -147,6 +147,9 @@ def build_institutional_report():
     liquidity_forecast = read_latest_csv("outputs/liquidity_forecast_log.csv")
     fred = read_latest_csv("outputs/fred_macro_cache.csv", "fred_macro_cache.csv")
 
+    ai_audit = read_latest_csv("outputs/ai_audit_summary.csv")
+    openai_audit = read_latest_csv("outputs/openai_audit_summary.csv")
+
     regime = first_valid(dashboard.get("regime"), macro.get("regime"))
     signal = first_valid(dashboard.get("sinal"), dashboard.get("sinal_operacional"), macro.get("sinal_operacional"))
     macro_conviction = first_valid(dashboard.get("macro_conviction"), macro.get("macro_conviction"))
@@ -191,6 +194,23 @@ def build_institutional_report():
 
     future_regime = first_valid(liquidity_forecast.get("future_regime"), dashboard.get("future_regime"))
     future_liquidity_score = first_valid(liquidity_forecast.get("future_liquidity_score"))
+
+    ai_status = first_valid(ai_audit.get("ai_audit_status"))
+    ai_score = first_valid(ai_audit.get("ai_audit_score"))
+    ai_root_cause = first_valid(ai_audit.get("root_cause"))
+
+    openai_status = first_valid(openai_audit.get("openai_audit_status"))
+    openai_verdict = first_valid(openai_audit.get("audit_verdict"))
+    openai_score = first_valid(openai_audit.get("audit_score"))
+    openai_confidence = first_valid(openai_audit.get("audit_confidence"))
+    openai_severity = first_valid(openai_audit.get("severity"))
+    openai_root_cause = first_valid(openai_audit.get("root_cause"))
+    openai_material_inconsistency = first_valid(openai_audit.get("material_inconsistency"))
+    openai_false_positive = first_valid(openai_audit.get("false_positive_risk"))
+    openai_false_negative = first_valid(openai_audit.get("false_negative_risk"))
+    openai_summary = first_valid(openai_audit.get("executive_summary"))
+    openai_governance = first_valid(openai_audit.get("governance_recommendation"))
+    openai_final = first_valid(openai_audit.get("final_opinion"))
 
     real_yield = first_valid(fred.get("real_yield_10y"), fred.get("DFII10"))
     nfci = first_valid(fred.get("nfci"), fred.get("financial_conditions"))
@@ -306,6 +326,8 @@ def build_institutional_report():
         {engine_row("Liquidity Engine", liquidity_level, fmt(liquidity_score))}
         {engine_row("Counterparty Engine", counterparty_level, fmt(counterparty_score))}
         {engine_row("Governance Engine", final_verdict, committee_action)}
+        {engine_row("AI Auditor Determinístico", ai_status, fmt(ai_score))}
+        {engine_row("OpenAI Auditor", openai_verdict, fmt(openai_score))}
     </table>
 
     <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">3. Sobrevivência Operacional</h2>
@@ -383,13 +405,49 @@ def build_institutional_report():
         </ol>
     </div>
 
+    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">8. Auditoria Independente de IA</h2>
+
+    <table style="width:100%;border-spacing:12px;">
+        <tr>
+            {card("AI Determinística", ai_status, f"Score: {fmt(ai_score)}", status_color(ai_status))}
+            {card("OpenAI Verdict", openai_verdict, f"Status: {openai_status}", status_color(openai_verdict))}
+            {card("OpenAI Score", fmt(openai_score), f"Confiança: {fmt(openai_confidence)}", status_color(openai_verdict))}
+        </tr>
+    </table>
+
+    <table style="width:100%;border-spacing:12px;margin-top:8px;">
+        <tr>
+            {card("Severity", openai_severity, "Severidade do risco", status_color(openai_severity))}
+            {card("False Positive", openai_false_positive, "Risco de falso positivo", status_color(openai_false_positive))}
+            {card("False Negative", openai_false_negative, "Risco de falso negativo", status_color(openai_false_negative))}
+        </tr>
+    </table>
+
+    <div style="background:#020617;border:1px solid #1f2937;border-radius:14px;padding:20px;margin-top:14px;">
+        <h3 style="margin-top:0;color:#60a5fa;">Causa Raiz Identificada</h3>
+        <p style="color:#d1d5db;line-height:1.7;">{openai_root_cause}</p>
+
+        <h3 style="color:#60a5fa;">Resumo Executivo da IA</h3>
+        <p style="color:#d1d5db;line-height:1.7;">{openai_summary}</p>
+
+        <h3 style="color:#60a5fa;">Risco de Inconsistência Material</h3>
+        <p style="color:#d1d5db;line-height:1.7;">Material inconsistency: <b>{openai_material_inconsistency}</b></p>
+
+        <h3 style="color:#60a5fa;">Recomendação de Governança</h3>
+        <p style="color:#d1d5db;line-height:1.7;">{openai_governance}</p>
+
+        <h3 style="color:#60a5fa;">Parecer Final</h3>
+        <p style="color:#d1d5db;line-height:1.7;">{openai_final}</p>
+    </div>
+
     <div style="background:#020617;border:1px solid #1f2937;border-radius:14px;padding:20px;margin-top:26px;">
         <h2 style="margin:0 0 12px 0;color:#f9fafb;font-size:20px;">Conclusão do Comitê</h2>
         <p style="color:#d1d5db;line-height:1.7;margin:0;">
             O sistema classificou o ambiente macro como <b>{regime}</b>, com sinal operacional
             <b>{signal}</b>. Contudo, a decisão final do comitê é <b style="color:{verdict_color};">{final_verdict}</b>,
             pois o fator determinante foi <b>{primary_cause}</b>. A ação recomendada é
-            <b>{committee_action}</b>.
+            <b>{committee_action}</b>. A auditoria independente de IA classificou o parecer como
+            <b>{openai_verdict}</b>, com score <b>{fmt(openai_score)}</b> e severidade <b>{openai_severity}</b>.
         </p>
     </div>
 
