@@ -6,6 +6,9 @@ from src.portfolio_engine import run_portfolio_engine
 from src.operational_risk import run_operational_risk
 from src.governance_engine import run_governance_engine
 from src.stress_engine import run_stress_engine
+from src.risk_budget_engine import run_risk_budget_engine
+from src.liquidity_engine import run_liquidity_engine
+from src.counterparty_engine import run_counterparty_engine
 
 
 def print_header(title):
@@ -40,6 +43,18 @@ def main():
         monthly_expense_usd=2000,
     )
 
+    risk_budget_context = run_risk_budget_engine(
+        rebalance=portfolio_context["rebalance"],
+    )
+
+    liquidity_context = run_liquidity_engine(
+        rebalance=portfolio_context["rebalance"],
+    )
+
+    counterparty_context = run_counterparty_engine(
+        rebalance=portfolio_context["rebalance"],
+    )
+
     governance_context = run_governance_engine(
         latest=macro_context["latest"],
         macro_engine_audit=macro_context["macro_engine_audit"],
@@ -54,11 +69,17 @@ def main():
         deterioration_audit=macro_context["deterioration_audit"],
         liquidity_forecast=macro_context["liquidity_forecast"],
         stress_summary_override=stress_context["stress_summary"],
+        risk_budget_summary=risk_budget_context["risk_budget_summary"],
+        liquidity_summary=liquidity_context["liquidity_summary"],
+        counterparty_summary=counterparty_context["counterparty_summary"],
     )
 
     latest = macro_context["latest"]
     survival = risk_context["survival_audit"].iloc[-1]
     stress = stress_context["stress_summary"].iloc[-1]
+    risk_budget = risk_budget_context["risk_budget_summary"].iloc[-1]
+    liquidity = liquidity_context["liquidity_summary"].iloc[-1]
+    counterparty = counterparty_context["counterparty_summary"].iloc[-1]
     risk = governance_context["risk_committee_integrated"].iloc[-1]
 
     print_header("ULTIMOROBO — RESUMO EXECUTIVO FINAL")
@@ -67,23 +88,44 @@ def main():
     print(f"Sinal Operacional:   {latest['sinal_operacional']}")
     print(f"Macro Conviction:    {float(latest['macro_conviction']):.2f}")
     print(f"Confidence Score:    {float(latest['confidence_score']):.2f}")
+
     print("----------------------------------------------------")
     print(f"Valor Total:         US${float(portfolio_context['total_value']):,.2f}")
     print(f"Giro Final:          {float(portfolio_context['gross_turnover_final']):.2%}")
     print(f"Status de Giro:      {portfolio_context['turnover_status']}")
+
     print("----------------------------------------------------")
     print(f"Survival Status:     {survival['survival_status']}")
     print(f"Risco de Ruína:      {survival['ruin_risk']}")
     print(f"Survival KillSwitch: {survival['survival_kill_switch']}")
+
     print("----------------------------------------------------")
     print(f"Stress Level:        {stress['stress_level']}")
     print(f"Stress Score:        {stress['stress_score']}")
     print(f"Max Drawdown:        {float(stress['max_drawdown_pct']):.2f}%")
     print(f"Forced Selling:      {stress['forced_selling_any']}")
+
+    print("----------------------------------------------------")
+    print(f"Risk Budget Level:   {risk_budget['risk_budget_level']}")
+    print(f"Risk Budget Score:   {risk_budget['risk_budget_score']}")
+    print(f"Top Risk Asset:      {risk_budget['top_risk_asset']}")
+    print(f"Max Risk Contrib.:   {float(risk_budget['max_risk_contribution_pct']):.2f}%")
+
+    print("----------------------------------------------------")
+    print(f"Liquidity Level:     {liquidity['liquidity_level']}")
+    print(f"Liquidity Score:     {liquidity['liquidity_score']}")
+    print(f"Haircut Agregado:    {float(liquidity['aggregate_haircut_pct']):.2f}%")
+
+    print("----------------------------------------------------")
+    print(f"Counterparty Level:  {counterparty['counterparty_level']}")
+    print(f"Counterparty Score:  {counterparty['counterparty_score']}")
+    print(f"Maior Contraparte:   {counterparty['largest_counterparty']}")
+
     print("----------------------------------------------------")
     print(f"Comitê:              {risk['integrated_risk_level']}")
     print(f"Ação:                {risk['committee_action']}")
     print(f"VEREDITO FINAL:      {risk['final_verdict']}")
+
     print("====================================================")
     print("Relatórios gerados:")
     print("- executive_dashboard.csv")
@@ -93,6 +135,12 @@ def main():
     print("- outputs/survival_audit.csv")
     print("- outputs/stress_results_v2.csv")
     print("- outputs/stress_summary_v2.csv")
+    print("- outputs/risk_budget.csv")
+    print("- outputs/risk_budget_summary.csv")
+    print("- outputs/liquidity_audit.csv")
+    print("- outputs/liquidity_summary.csv")
+    print("- outputs/counterparty_audit.csv")
+    print("- outputs/counterparty_summary.csv")
     print("====================================================")
 
     return {
@@ -101,6 +149,9 @@ def main():
         "portfolio": portfolio_context,
         "risk": risk_context,
         "stress": stress_context,
+        "risk_budget": risk_budget_context,
+        "liquidity": liquidity_context,
+        "counterparty": counterparty_context,
         "governance": governance_context,
     }
 
