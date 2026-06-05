@@ -13,6 +13,10 @@ def utc_now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+def ensure_outputs_dir():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+
 def build_positions_df(rebalance):
     positions_df = rebalance.copy().reset_index()
 
@@ -58,6 +62,37 @@ def classify_color(drawdown_pct, ttr_range, forced_selling):
     return "VERMELHO"
 
 
+def classify_stress_summary(max_drawdown, red_count, yellow_count, forced_selling_any):
+    """
+    V4: classificação menos binária e mais institucional.
+
+    Regra:
+    - Forced selling sempre é crítico.
+    - 2+ cenários vermelhos = crítico.
+    - 1 cenário vermelho sem forced selling = elevado/fragil, não crítico automático.
+    - Drawdown <= 35% sem forced selling = aceitável com ressalvas.
+    """
+
+    if forced_selling_any:
+        return 40, "CRITICO"
+
+    if red_count >= 2:
+        return 40, "CRITICO"
+
+    if red_count == 1:
+        if max_drawdown <= 35:
+            return 60, "FRAGIL_COM_RESSALVAS"
+        return 55, "FRAGIL"
+
+    if max_drawdown <= 20 and yellow_count == 0:
+        return 90, "ROBUSTO"
+
+    if max_drawdown <= 35:
+        return 75, "ACEITAVEL_COM_RESSALVAS"
+
+    return 55, "FRAGIL"
+
+
 def run_stress_engine(
     rebalance,
     monthly_expense_usd=2000,
@@ -70,12 +105,14 @@ def run_stress_engine(
 
     positions_df = build_positions_df(rebalance)
 
-    total_value = positions_df["valor_atual"].sum()
+    total_value = float(positions_df["valor_atual"].sum())
     weights = dict(zip(positions_df["ativo"], positions_df["peso_atual"]))
 
-    survival_value = positions_df[
-        positions_df["ativo"].isin(survival_assets)
-    ]["valor_atual"].sum()
+    survival_value = float(
+        positions_df[
+            positions_df["ativo"].isin(survival_assets)
+        ]["valor_atual"].sum()
+    )
 
     runway_months = (
         survival_value / monthly_expense_usd
@@ -124,9 +161,6 @@ def run_stress_engine(
             "INDA": -0.15,
             "ttr": "24-60",
         },
-
-        # Choque regulatório de preço/liquidez cripto.
-        # Com BTC em SELF_CUSTODY, este cenário não deve gerar forced selling automático.
         "CHOQUE_REGULATORIO_CRIPTO": {
             "BTC-USD": -0.35,
             "USDT-USD": -0.10,
@@ -137,9 +171,6 @@ def run_stress_engine(
             "INDA": -0.05,
             "ttr": "12-36",
         },
-
-        # Choque específico de stablecoin/custódia.
-        # Forced selling só ocorre se USDT for relevante demais ou runway ficar baixo.
         "CHOQUE_STABLECOIN_CUSTODIA": {
             "BTC-USD": -0.10,
             "USDT-USD": -0.30,
@@ -196,25 +227,19 @@ def run_stress_engine(
 
     stress_results = pd.DataFrame(rows)
 
-    max_drawdown = stress_results["drawdown_pct"].max()
-    avg_drawdown = stress_results["drawdown_pct"].mean()
+    max_drawdown = float(stress_results["drawdown_pct"].max())
+    avg_drawdown = float(stress_results["drawdown_pct"].mean())
     red_count = int((stress_results["cor"] == "VERMELHO").sum())
     yellow_count = int((stress_results["cor"] == "AMARELO").sum())
     green_count = int((stress_results["cor"] == "VERDE").sum())
     forced_selling_any = bool(stress_results["forced_selling"].any())
 
-    if forced_selling_any or red_count > 0:
-        stress_level = "CRITICO"
-        stress_score = 40
-    elif max_drawdown <= 20 and yellow_count == 0:
-        stress_level = "ROBUSTO"
-        stress_score = 90
-    elif max_drawdown <= 35:
-        stress_level = "ACEITAVEL_COM_RESSALVAS"
-        stress_score = 75
-    else:
-        stress_level = "FRAGIL"
-        stress_score = 55
+    stress_score, stress_level = classify_stress_summary(
+        max_drawdown=max_drawdown,
+        red_count=red_count,
+        yellow_count=yellow_count,
+        forced_selling_any=forced_selling_any,
+    )
 
     stress_summary = pd.DataFrame([{
         "timestamp_utc": timestamp_utc,
@@ -228,7 +253,7 @@ def run_stress_engine(
         "stress_level": stress_level,
     }])
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    ensure_outputs_dir()
 
     stress_results.to_csv(
         os.path.join(OUTPUT_DIR, "stress_results_v2.csv"),
@@ -241,7 +266,7 @@ def run_stress_engine(
     )
 
     print("====================================================")
-    print("STRESS ENGINE — TTR + FORCED SELLING V3")
+    print("STRESS ENGINE — TTR + FORCED SELLING V4")
     print("====================================================")
     print(f"Data UTC:              {timestamp_utc}")
     print(f"Valor total carteira:  US${total_value:,.2f}")
