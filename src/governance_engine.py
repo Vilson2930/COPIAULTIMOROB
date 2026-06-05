@@ -373,6 +373,21 @@ def extract_optional_score(summary, column, default=100):
         return default
 
 
+def extract_optional_text(summary, column, default="N/D"):
+    if summary is None or summary.empty:
+        return default
+
+    latest = summary.iloc[-1]
+
+    if column not in latest:
+        return default
+
+    try:
+        return str(latest[column])
+    except Exception:
+        return default
+
+
 def run_integrated_risk_committee(
     committee_audit,
     stress_summary,
@@ -403,6 +418,24 @@ def run_integrated_risk_committee(
         default=100,
     )
 
+    risk_budget_level = extract_optional_text(
+        risk_budget_summary,
+        "risk_budget_level",
+        default="N/D",
+    )
+
+    top_risk_contribution = extract_optional_score(
+        risk_budget_summary,
+        "max_risk_contribution_pct",
+        default=0,
+    )
+
+    top_risk_asset = extract_optional_text(
+        risk_budget_summary,
+        "top_risk_asset",
+        default="N/D",
+    )
+
     liquidity_score = extract_optional_score(
         liquidity_summary,
         "liquidity_score",
@@ -429,12 +462,12 @@ def run_integrated_risk_committee(
     )
 
     integrated_risk_score = (
-        committee_score * 0.20
+        committee_score * 0.10
         + stress_score * 0.20
         + survival_score * 0.15
         + deterioration_score * 0.10
         + future_liquidity_score * 0.10
-        + risk_budget_score * 0.10
+        + risk_budget_score * 0.20
         + liquidity_score * 0.075
         + counterparty_score * 0.075
     )
@@ -462,7 +495,13 @@ def run_integrated_risk_committee(
     if forced_selling_any:
         critical_flags.append("FORCED_SELLING_STRESS")
 
-    if risk_budget_score < 60:
+    if top_risk_contribution >= 80:
+        critical_flags.append("DOMINANCIA_DE_RISCO")
+
+    if risk_budget_score <= 40 or risk_budget_level == "CRITICO":
+        critical_flags.append("RISK_BUDGET_CRITICO")
+
+    elif risk_budget_score < 60 or risk_budget_level == "CONCENTRADO":
         critical_flags.append("RISK_BUDGET_CONCENTRADO")
 
     if liquidity_score < 60:
@@ -483,54 +522,82 @@ def run_integrated_risk_committee(
         or counterparty_score < 50
     )
 
-    concentration_with_fragility = (
-        risk_budget_score < 50
-        and (
-            stress_score < 55
-            or liquidity_score < 70
-            or counterparty_score < 70
-            or future_regime in ["CONTRACAO", "NEUTRO_FRAGIL"]
-        )
+    risk_budget_critical = (
+        risk_budget_score <= 40
+        or risk_budget_level == "CRITICO"
+        or top_risk_contribution >= 80
     )
 
-    concentration_only = (
-        risk_budget_score < 50
-        and not hard_elevated
-        and not concentration_with_fragility
+    risk_budget_concentrated = (
+        risk_budget_score < 60
+        or risk_budget_level == "CONCENTRADO"
+        or top_risk_contribution >= 65
+    )
+
+    concentration_with_fragility = (
+        risk_budget_concentrated
+        and (
+            stress_score < 70
+            or liquidity_score < 70
+            or counterparty_score < 70
+            or future_liquidity_score < 60
+        )
     )
 
     if hard_failure:
         integrated_risk_level = "CRITICO"
+
+    elif risk_budget_critical:
+        integrated_risk_level = "CRITICO"
+
     elif hard_elevated or concentration_with_fragility:
         integrated_risk_level = "ELEVADO"
-    elif concentration_only:
+
+    elif risk_budget_concentrated:
         integrated_risk_level = "MODERADO"
+
     elif integrated_risk_score >= 85:
         integrated_risk_level = "BAIXO"
+
     elif integrated_risk_score >= 70:
         integrated_risk_level = "MODERADO"
+
     elif integrated_risk_score >= 55:
         integrated_risk_level = "ELEVADO"
+
     else:
         integrated_risk_level = "CRITICO"
 
     if integrated_risk_level == "CRITICO":
-        committee_action = "BLOQUEAR_RISCO_E_CORRIGIR_OPERACIONAL"
+        if risk_budget_critical and not hard_failure:
+            committee_action = "REDUZIR_CONCENTRACAO_DE_RISCO_E_REVALIDAR"
+        else:
+            committee_action = "BLOQUEAR_RISCO_E_CORRIGIR_OPERACIONAL"
+
     elif integrated_risk_level == "ELEVADO":
         committee_action = "REDUZIR_RISCO_E_REVALIDAR"
+
     elif integrated_risk_level == "MODERADO":
-        committee_action = "MANTER_COM_RESSALVAS"
+        if risk_budget_concentrated:
+            committee_action = "MANTER_COM_RESSALVAS_E_MONITORAR_CONCENTRACAO"
+        else:
+            committee_action = "MANTER_COM_RESSALVAS"
+
     else:
         committee_action = "MANTER_APROVADO"
 
     if survival_kill_switch:
         final_verdict = "REPROVADO_OPERACIONALMENTE"
+
     elif integrated_risk_level == "CRITICO":
         final_verdict = "REPROVADO"
+
     elif integrated_risk_level == "ELEVADO":
         final_verdict = "APROVADO_COM_RESSALVAS_CRITICAS"
+
     elif integrated_risk_level == "MODERADO":
         final_verdict = "APROVADO_COM_RESSALVAS"
+
     else:
         final_verdict = "APROVADO"
 
@@ -542,6 +609,9 @@ def run_integrated_risk_committee(
         "future_liquidity_score": future_liquidity_score,
         "survival_score": survival_score,
         "risk_budget_score": risk_budget_score,
+        "risk_budget_level": risk_budget_level,
+        "top_risk_asset": top_risk_asset,
+        "top_risk_contribution_pct": top_risk_contribution,
         "liquidity_score": liquidity_score,
         "counterparty_score": counterparty_score,
         "integrated_risk_score": integrated_risk_score,
@@ -640,6 +710,11 @@ def run_final_opinion(
             "Ativar revisão macro extraordinária por deterioração antecipada."
         )
 
+    if committee_action == "REDUZIR_CONCENTRACAO_DE_RISCO_E_REVALIDAR":
+        required_evidence.append(
+            "Reduzir dominância de risco do ativo principal e revalidar o risk budget."
+        )
+
     if not required_evidence:
         required_evidence.append(
             "Manter rotina de revalidação periódica e logs de auditoria."
@@ -652,6 +727,9 @@ def run_final_opinion(
         revalidation_deadline_days = 7
     elif forced_selling_any:
         ruin_risk_after = "MEDIO_CONDICIONADO_A_REDUCAO_DE_FORCED_SELLING"
+        revalidation_deadline_days = 14
+    elif committee_action == "REDUZIR_CONCENTRACAO_DE_RISCO_E_REVALIDAR":
+        ruin_risk_after = "MEDIO_CONDICIONADO_A_REDUCAO_DE_CONCENTRACAO"
         revalidation_deadline_days = 14
     else:
         ruin_risk_after = ruin_risk
