@@ -1,5 +1,3 @@
-# src/governance_engine.py
-
 import os
 from datetime import datetime, timezone
 
@@ -18,11 +16,6 @@ def ensure_outputs_dir():
 
 
 def calculate_operational_score(survival_audit):
-    """
-    Operational Score real baseado no Survival Audit.
-    Substitui o antigo placeholder: operational_score = 50.
-    """
-
     if survival_audit is None or survival_audit.empty:
         return 0
 
@@ -34,9 +27,6 @@ def calculate_operational_score(survival_audit):
     bucket_jurisdicoes = int(latest.get("bucket_jurisdicoes_validas", 0))
     max_concentration = float(latest.get("max_bucket_concentration", 1.0))
     survival_kill_switch = bool(latest.get("survival_kill_switch", True))
-
-    if survival_kill_switch:
-        return 40
 
     score = 100
 
@@ -54,7 +44,7 @@ def calculate_operational_score(survival_audit):
         score -= 20
 
     if bucket_jurisdicoes < 2:
-        score -= 30
+        score -= 20
 
     if max_concentration > 0.65:
         score -= 10
@@ -63,7 +53,12 @@ def calculate_operational_score(survival_audit):
     if max_concentration > 0.90:
         score -= 25
 
-    return max(0, min(100, round(score, 2)))
+    score = max(0, min(100, round(score, 2)))
+
+    if survival_kill_switch:
+        return min(score, 40)
+
+    return score
 
 
 def build_audit_logs(
@@ -239,6 +234,8 @@ def run_stress_test(rebalance):
         "max_drawdown_pct": max_drawdown,
         "stress_score": stress_score,
         "robustez": robustez,
+        "stress_level": robustez,
+        "forced_selling_any": False,
     }])
 
     ensure_outputs_dir()
@@ -387,10 +384,13 @@ def run_integrated_risk_committee(
     future_regime = str(liquidity_latest["future_regime"])
     early_warning = bool(deterioration_latest["early_warning"])
 
+    stress_level = str(stress_latest.get("stress_level", stress_latest.get("robustez", "")))
+    forced_selling_any = bool(stress_latest.get("forced_selling_any", False))
+
     integrated_risk_score = (
         committee_score * 0.30
-        + stress_score * 0.20
-        + deterioration_score * 0.20
+        + stress_score * 0.25
+        + deterioration_score * 0.15
         + future_liquidity_score * 0.15
         + survival_score * 0.15
     )
@@ -412,8 +412,16 @@ def run_integrated_risk_committee(
     if stress_score < 70:
         critical_flags.append("STRESS_MODERADO_OU_FRAGIL")
 
+    if stress_level == "CRITICO":
+        critical_flags.append("STRESS_CRITICO")
+
+    if forced_selling_any:
+        critical_flags.append("FORCED_SELLING_STRESS")
+
     if survival_kill_switch or ruin_risk == "ALTO":
         integrated_risk_level = "CRITICO"
+    elif forced_selling_any or stress_level == "CRITICO":
+        integrated_risk_level = "ELEVADO"
     elif integrated_risk_score >= 85:
         integrated_risk_level = "BAIXO"
     elif integrated_risk_score >= 70:
@@ -493,7 +501,8 @@ def run_final_opinion(
     survival_kill_switch = bool(survival_latest["survival_kill_switch"])
 
     stress_score = float(stress_latest["stress_score"])
-    robustez = str(stress_latest["robustez"])
+    robustez = str(stress_latest.get("robustez", stress_latest.get("stress_level", "N/D")))
+    forced_selling_any = bool(stress_latest.get("forced_selling_any", False))
 
     deterioration_score = float(deterioration_latest["deterioration_score"])
     early_warning = bool(deterioration_latest["early_warning"])
@@ -525,6 +534,11 @@ def run_final_opinion(
             "Reduzir risco de ruína operacional antes de nova aprovação."
         )
 
+    if forced_selling_any:
+        required_evidence.append(
+            "Reduzir risco de forced selling identificado no stress test."
+        )
+
     if future_regime in ["NEUTRO_FRAGIL", "CONTRACAO"]:
         required_evidence.append(
             "Monitorar liquidez prospectiva antes de aumentar risco adicional."
@@ -550,6 +564,9 @@ def run_final_opinion(
     if survival_kill_switch:
         ruin_risk_after = "BAIXO_CONDICIONADO_A_CORRECAO_DO_BUCKET"
         revalidation_deadline_days = 7
+    elif forced_selling_any:
+        ruin_risk_after = "MEDIO_CONDICIONADO_A_REDUCAO_DE_FORCED_SELLING"
+        revalidation_deadline_days = 14
     else:
         ruin_risk_after = ruin_risk
         revalidation_deadline_days = 30
@@ -567,6 +584,7 @@ def run_final_opinion(
         "survival_kill_switch": survival_kill_switch,
         "stress_score": stress_score,
         "robustez": robustez,
+        "forced_selling_any": forced_selling_any,
         "deterioration_score": deterioration_score,
         "early_warning": early_warning,
         "future_liquidity_score": future_liquidity_score,
@@ -635,6 +653,7 @@ def run_governance_engine(
     survival_audit,
     deterioration_audit,
     liquidity_forecast,
+    stress_summary_override=None,
 ):
     audit_log_df, orders_log = build_audit_logs(
         latest=latest,
@@ -645,9 +664,14 @@ def run_governance_engine(
         kill_switch=kill_switch,
     )
 
-    stress_results, stress_summary = run_stress_test(
+    stress_results, stress_summary_default = run_stress_test(
         rebalance=rebalance,
     )
+
+    if stress_summary_override is not None:
+        stress_summary = stress_summary_override
+    else:
+        stress_summary = stress_summary_default
 
     committee_audit = run_committee_audit(
         latest=latest,
