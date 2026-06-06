@@ -20,6 +20,16 @@ def read_latest_csv(*paths):
     return {}
 
 
+def read_csv_safe(path):
+    p = Path(path)
+    if not p.exists() or not p.is_file():
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(p)
+    except Exception:
+        return pd.DataFrame()
+
+
 def first_valid(*values, default="N/D"):
     for v in values:
         if v is None:
@@ -44,12 +54,26 @@ def is_true(value):
 
 def status_color(value):
     v = str(value).upper()
-    if any(x in v for x in ["REPROVADO", "CRITICO", "CRÍTICO", "ALTO", "FAIL", "BLOQUEAR", "CRITICA", "CRÍTICA"]):
+    if any(x in v for x in [
+        "REPROVADO", "CRITICO", "CRÍTICO", "ALTO", "FAIL",
+        "BLOQUEAR", "CRITICA", "CRÍTICA", "CRITICA"
+    ]):
         return "#ef4444"
-    if any(x in v for x in ["RESSALVA", "MEDIO", "MÉDIO", "MODERADO", "ATENCAO", "ATENÇÃO", "FRAGIL", "FRÁGIL", "MEDIA", "MÉDIA"]):
+
+    if any(x in v for x in [
+        "RESSALVA", "MEDIO", "MÉDIO", "MODERADO", "ATENCAO",
+        "ATENÇÃO", "FRAGIL", "FRÁGIL", "MEDIA", "MÉDIA",
+        "DESALINHADO", "DISTANTE"
+    ]):
         return "#facc15"
-    if any(x in v for x in ["APROVADO", "VALIDADO", "BAIXO", "NORMAL", "OK", "INSTITUCIONAL", "ROBUSTO", "ACEITAVEL", "COERENTE"]):
+
+    if any(x in v for x in [
+        "APROVADO", "VALIDADO", "BAIXO", "NORMAL", "OK",
+        "INSTITUCIONAL", "ROBUSTO", "ACEITAVEL", "ACEITÁVEL",
+        "COERENTE", "ALINHADO"
+    ]):
         return "#22c55e"
+
     return "#38bdf8"
 
 
@@ -133,6 +157,34 @@ def build_macro_interpretation(real_yield, nfci, hy_spread, yield_curve, early_w
     """
 
 
+def build_allocation_table(allocation_rows):
+    if allocation_rows.empty:
+        return """
+        <tr>
+            <td colspan="6" style="padding:10px;color:#d1d5db;">
+                Allocation Advisor não disponível.
+            </td>
+        </tr>
+        """
+
+    rows = ""
+
+    for _, row in allocation_rows.head(10).iterrows():
+        priority = row.get("prioridade_modelo", "N/D")
+        rows += f"""
+        <tr>
+            <td style="padding:10px;border-bottom:1px solid #1f2937;color:#d1d5db;">{row.get("ativo", "N/D")}</td>
+            <td style="padding:10px;border-bottom:1px solid #1f2937;color:#f9fafb;">{fmt(row.get("peso_atual_pct"))}%</td>
+            <td style="padding:10px;border-bottom:1px solid #1f2937;color:#f9fafb;">{fmt(row.get("peso_alvo_pct"))}%</td>
+            <td style="padding:10px;border-bottom:1px solid #1f2937;color:{status_color(priority)};font-weight:bold;">{fmt(row.get("desvio_pct"))}%</td>
+            <td style="padding:10px;border-bottom:1px solid #1f2937;color:{status_color(priority)};font-weight:bold;">{row.get("acao_modelo", "N/D")}</td>
+            <td style="padding:10px;border-bottom:1px solid #1f2937;color:#d1d5db;">{priority}</td>
+        </tr>
+        """
+
+    return rows
+
+
 def build_institutional_report():
     dashboard = read_latest_csv("outputs/executive_dashboard.csv", "executive_dashboard.csv")
     macro = read_latest_csv("outputs/macro_engine_audit.csv", "macro_engine_audit.csv")
@@ -144,18 +196,18 @@ def build_institutional_report():
     liquidity = read_latest_csv("outputs/liquidity_summary.csv")
     counterparty = read_latest_csv("outputs/counterparty_summary.csv")
     deterioration = read_latest_csv("outputs/deterioration_audit.csv")
-    liquidity_forecast = read_latest_csv("outputs/liquidity_forecast_log.csv")
     fred = read_latest_csv("outputs/fred_macro_cache.csv", "fred_macro_cache.csv")
 
     ai_audit = read_latest_csv("outputs/ai_audit_summary.csv")
     openai_audit = read_latest_csv("outputs/openai_audit_summary.csv")
 
+    allocation_summary = read_latest_csv("outputs/allocation_advisor_summary.csv")
+    allocation_rows = read_csv_safe("outputs/allocation_advisor.csv")
+
     regime = first_valid(dashboard.get("regime"), macro.get("regime"))
     signal = first_valid(dashboard.get("sinal"), dashboard.get("sinal_operacional"), macro.get("sinal_operacional"))
     macro_conviction = first_valid(dashboard.get("macro_conviction"), macro.get("macro_conviction"))
-    confidence = first_valid(dashboard.get("confidence"), dashboard.get("confidence_score"), macro.get("confidence_score"))
     macro_score = first_valid(macro.get("macro_score"), macro_conviction)
-    macro_momentum = first_valid(macro.get("macro_momentum"), "N/D")
 
     final_verdict = first_valid(dashboard.get("final_verdict"), risk.get("final_verdict"))
     committee_action = first_valid(dashboard.get("committee_action"), risk.get("committee_action"))
@@ -188,16 +240,10 @@ def build_institutional_report():
     market_status = first_valid(market.get("market_status"), market.get("market_data_status"), "INSTITUCIONAL")
     market_score = first_valid(market.get("market_score"), market.get("market_data_score"), "100")
 
-    deterioration_score = first_valid(deterioration.get("deterioration_score"))
-    deterioration_status = first_valid(deterioration.get("deterioration_status"))
     early_warning = first_valid(deterioration.get("early_warning"), False)
-
-    future_regime = first_valid(liquidity_forecast.get("future_regime"), dashboard.get("future_regime"))
-    future_liquidity_score = first_valid(liquidity_forecast.get("future_liquidity_score"))
 
     ai_status = first_valid(ai_audit.get("ai_audit_status"))
     ai_score = first_valid(ai_audit.get("ai_audit_score"))
-    ai_root_cause = first_valid(ai_audit.get("root_cause"))
 
     openai_status = first_valid(openai_audit.get("openai_audit_status"))
     openai_verdict = first_valid(openai_audit.get("audit_verdict"))
@@ -210,7 +256,18 @@ def build_institutional_report():
     openai_false_negative = first_valid(openai_audit.get("false_negative_risk"))
     openai_summary = first_valid(openai_audit.get("executive_summary"))
     openai_governance = first_valid(openai_audit.get("governance_recommendation"))
-    openai_final = first_valid(openai_audit.get("final_opinion"))
+    openai_final = first_valid(
+        openai_audit.get("final_opinion"),
+        openai_audit.get("executive_summary"),
+        default="Parecer final não informado pela auditoria OpenAI.",
+    )
+
+    allocation_score = first_valid(allocation_summary.get("allocation_alignment_score"))
+    allocation_level = first_valid(allocation_summary.get("allocation_alignment_level"))
+    model_drift = first_valid(allocation_summary.get("total_model_drift_pct"))
+    turnover_recommended = first_valid(allocation_summary.get("turnover_recommended_pct"))
+    top_gap_asset = first_valid(allocation_summary.get("top_gap_asset"))
+    top_gap_abs = first_valid(allocation_summary.get("top_gap_abs_pct"))
 
     real_yield = first_valid(fred.get("real_yield_10y"), fred.get("DFII10"))
     nfci = first_valid(fred.get("nfci"), fred.get("financial_conditions"))
@@ -252,8 +309,8 @@ def build_institutional_report():
         decision_type = "APROVAÇÃO OU APROVAÇÃO CONDICIONAL"
 
     macro_text = build_macro_interpretation(real_yield, nfci, hy_spread, yield_curve, early_warning)
-
     verdict_color = status_color(final_verdict)
+    allocation_table_rows = build_allocation_table(allocation_rows)
 
     return f"""
 <!DOCTYPE html>
@@ -264,12 +321,8 @@ def build_institutional_report():
 
     <div style="border-bottom:1px solid #1f2937;padding-bottom:22px;margin-bottom:26px;">
         <h1 style="margin:0;color:#60a5fa;font-size:34px;letter-spacing:.03em;">ULTIMOROBO</h1>
-        <p style="margin:8px 0 0 0;color:#d1d5db;font-size:15px;">
-            Relatório Institucional — Comitê Macro Global
-        </p>
-        <p style="margin:8px 0 0 0;color:#9ca3af;font-size:13px;">
-            Gerado em: {utc_now()}
-        </p>
+        <p style="margin:8px 0 0 0;color:#d1d5db;font-size:15px;">Relatório Institucional — Comitê Macro Global</p>
+        <p style="margin:8px 0 0 0;color:#9ca3af;font-size:13px;">Gerado em: {utc_now()}</p>
     </div>
 
     <div style="background:#020617;border:1px solid #1f2937;border-radius:18px;padding:24px;margin-bottom:22px;">
@@ -320,6 +373,7 @@ def build_institutional_report():
         </tr>
         {engine_row("Macro Engine", regime, fmt(macro_conviction))}
         {engine_row("Market Data Engine", market_status, fmt(market_score))}
+        {engine_row("Allocation Advisor", allocation_level, fmt(allocation_score))}
         {engine_row("Survival Engine", survival_status, fmt(survival_score))}
         {engine_row("Stress Engine", stress_level, fmt(stress_score))}
         {engine_row("Risk Budget Engine", risk_budget_level, fmt(risk_budget_score))}
@@ -330,7 +384,39 @@ def build_institutional_report():
         {engine_row("OpenAI Auditor", openai_verdict, fmt(openai_score))}
     </table>
 
-    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">3. Sobrevivência Operacional</h2>
+    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">3. Alinhamento da Carteira ao Modelo</h2>
+
+    <table style="width:100%;border-spacing:12px;">
+        <tr>
+            {card("Allocation Score", fmt(allocation_score), "Aderência ao alvo operacional", status_color(allocation_level))}
+            {card("Allocation Level", allocation_level, "Classificação de alinhamento", status_color(allocation_level))}
+            {card("Model Drift", f"{fmt(model_drift)}%", "Distância total ao modelo", status_color(allocation_level))}
+        </tr>
+    </table>
+
+    <table style="width:100%;border-spacing:12px;margin-top:8px;">
+        <tr>
+            {card("Top Gap Asset", top_gap_asset, "Maior desvio individual", "#38bdf8")}
+            {card("Top Gap", f"{fmt(top_gap_abs)}%", "Desvio absoluto", status_color(allocation_level))}
+            {card("Turnover Recomendado", f"{fmt(turnover_recommended)}%", "Execução sujeita ao limite de giro", "#38bdf8")}
+        </tr>
+    </table>
+
+    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">4. Alvo Operacional Recomendado</h2>
+
+    <table style="width:100%;border-collapse:collapse;background:#020617;border:1px solid #1f2937;border-radius:14px;overflow:hidden;">
+        <tr>
+            <th style="padding:10px;color:#9ca3af;text-align:left;">Ativo</th>
+            <th style="padding:10px;color:#9ca3af;text-align:left;">Atual</th>
+            <th style="padding:10px;color:#9ca3af;text-align:left;">Alvo</th>
+            <th style="padding:10px;color:#9ca3af;text-align:left;">Desvio</th>
+            <th style="padding:10px;color:#9ca3af;text-align:left;">Ação</th>
+            <th style="padding:10px;color:#9ca3af;text-align:left;">Prioridade</th>
+        </tr>
+        {allocation_table_rows}
+    </table>
+
+    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">5. Sobrevivência Operacional</h2>
 
     <table style="width:100%;border-spacing:12px;">
         <tr>
@@ -340,7 +426,7 @@ def build_institutional_report():
         </tr>
     </table>
 
-    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">4. Estresse, Liquidez e Risco</h2>
+    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">6. Estresse, Liquidez e Risco</h2>
 
     <table style="width:100%;border-spacing:12px;">
         <tr>
@@ -358,7 +444,7 @@ def build_institutional_report():
         </tr>
     </table>
 
-    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">5. Painel Macroeconômico</h2>
+    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">7. Painel Macroeconômico</h2>
 
     <table style="width:100%;border-collapse:collapse;background:#020617;border:1px solid #1f2937;border-radius:14px;overflow:hidden;">
         <tr>
@@ -387,25 +473,26 @@ def build_institutional_report():
         </tr>
     </table>
 
-    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">6. Interpretação Macro</h2>
+    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">8. Interpretação Macro</h2>
 
     <div style="background:#020617;border:1px solid #1f2937;border-radius:14px;padding:20px;">
         {macro_text}
     </div>
 
-    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">7. Condições para Revalidação</h2>
+    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">9. Condições para Revalidação</h2>
 
     <div style="background:#020617;border:1px solid #1f2937;border-radius:14px;padding:20px;color:#d1d5db;line-height:1.7;">
         <ol style="margin:0;padding-left:22px;">
-            <li>Restaurar runway operacional para no mínimo 12 meses.</li>
-            <li>Executar nova rodada do Survival Engine com Kill Switch = False.</li>
+            <li>Manter runway operacional acima de 12 meses.</li>
+            <li>Confirmar Survival Kill Switch = False.</li>
             <li>Confirmar ausência de Forced Selling nos cenários de stress.</li>
+            <li>Reduzir desalinhamento material contra o Allocation Advisor.</li>
             <li>Revalidar Risk Budget, Liquidity e Counterparty após ajustes.</li>
             <li>Arquivar novo relatório executivo e logs de auditoria.</li>
         </ol>
     </div>
 
-    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">8. Auditoria Independente de IA</h2>
+    <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">10. Auditoria Independente de IA</h2>
 
     <table style="width:100%;border-spacing:12px;">
         <tr>
@@ -444,10 +531,16 @@ def build_institutional_report():
         <h2 style="margin:0 0 12px 0;color:#f9fafb;font-size:20px;">Conclusão do Comitê</h2>
         <p style="color:#d1d5db;line-height:1.7;margin:0;">
             O sistema classificou o ambiente macro como <b>{regime}</b>, com sinal operacional
-            <b>{signal}</b>. Contudo, a decisão final do comitê é <b style="color:{verdict_color};">{final_verdict}</b>,
-            pois o fator determinante foi <b>{primary_cause}</b>. A ação recomendada é
-            <b>{committee_action}</b>. A auditoria independente de IA classificou o parecer como
-            <b>{openai_verdict}</b>, com score <b>{fmt(openai_score)}</b> e severidade <b>{openai_severity}</b>.
+            <b>{signal}</b>. A decisão final do comitê é
+            <b style="color:{verdict_color};">{final_verdict}</b>, pois o fator determinante foi
+            <b>{primary_cause}</b>. A ação recomendada é <b>{committee_action}</b>.
+            O Allocation Advisor classificou a carteira como <b>{allocation_level}</b>,
+            com score <b>{fmt(allocation_score)}</b> e drift de modelo de
+            <b>{fmt(model_drift)}%</b>. O maior desvio identificado foi em
+            <b>{top_gap_asset}</b>, com gap de <b>{fmt(top_gap_abs)}%</b>.
+            A auditoria independente de IA classificou o parecer como
+            <b>{openai_verdict}</b>, com score <b>{fmt(openai_score)}</b>
+            e severidade <b>{openai_severity}</b>.
         </p>
     </div>
 
@@ -456,7 +549,6 @@ def build_institutional_report():
     </p>
 
 </div>
-
 </body>
 </html>
 """
