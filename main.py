@@ -9,6 +9,7 @@ from src.liquidity_engine import run_liquidity_engine
 from src.counterparty_engine import run_counterparty_engine
 from src.ai_auditor import run_ai_auditor
 from src.openai_auditor import run_openai_auditor
+from src.allocation_advisor import build_allocation_advisor
 
 
 def print_header(title):
@@ -40,6 +41,10 @@ def main():
     portfolio_context = run_portfolio_engine(
         latest=macro_context["latest"],
         latest_market=data_context["latest_market"],
+    )
+
+    allocation_advisor_context = build_allocation_advisor(
+        portfolio_context["rebalance"]
     )
 
     risk_context = run_operational_risk(
@@ -108,6 +113,9 @@ def main():
     counterparty = counterparty_context["counterparty_summary"].iloc[-1]
     risk = governance_context["risk_committee_integrated"].iloc[-1]
     ai_audit = ai_audit_context["ai_audit_summary"].iloc[-1]
+    allocation_summary = allocation_advisor_context[
+        "allocation_advisor_summary"
+    ].iloc[-1]
 
     openai_audit = safe_last(
         openai_audit_context,
@@ -125,6 +133,13 @@ def main():
     print(f"Valor Total:         US${float(portfolio_context['total_value']):,.2f}")
     print(f"Giro Final:          {float(portfolio_context['gross_turnover_final']):.2%}")
     print(f"Status de Giro:      {portfolio_context['turnover_status']}")
+
+    print("----------------------------------------------------")
+    print(f"Allocation Score:    {allocation_summary['allocation_alignment_score']}")
+    print(f"Allocation Level:    {allocation_summary['allocation_alignment_level']}")
+    print(f"Model Drift:         {float(allocation_summary['total_model_drift_pct']):.2f}%")
+    print(f"Top Gap Asset:       {allocation_summary['top_gap_asset']}")
+    print(f"Top Gap Abs:         {float(allocation_summary['top_gap_abs_pct']):.2f}%")
 
     print("----------------------------------------------------")
     print(f"Survival Status:     {survival['survival_status']}")
@@ -183,6 +198,8 @@ def main():
     print("- risk_committee_integrated.csv")
     print("- audit_log_robo_macro.csv")
     print("- orders_log_robo_macro.csv")
+    print("- outputs/allocation_advisor.csv")
+    print("- outputs/allocation_advisor_summary.csv")
     print("- outputs/survival_audit.csv")
     print("- outputs/stress_results_v2.csv")
     print("- outputs/stress_summary_v2.csv")
@@ -203,6 +220,7 @@ def main():
         "data": data_context,
         "macro": macro_context,
         "portfolio": portfolio_context,
+        "allocation_advisor": allocation_advisor_context,
         "risk": risk_context,
         "stress": stress_context,
         "risk_budget": risk_budget_context,
