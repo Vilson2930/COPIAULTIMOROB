@@ -36,7 +36,7 @@ jobs:
           EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
         run: |
-          python src/email_report.py
+          python -m src.email_report
 
       - name: Upload reports
         uses: actions/upload-artifact@v4
