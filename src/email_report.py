@@ -1,9 +1,16 @@
 import os
+import sys
 import smtplib
 from pathlib import Path
 from email.message import EmailMessage
 
-from report_engine import build_institutional_report
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from src.report_engine import build_institutional_report
 
 
 SMTP_SERVER = "smtp.gmail.com"
@@ -22,7 +29,22 @@ def find_csv_files():
         "outputs/executive_dashboard.csv",
         "outputs/risk_committee_integrated.csv",
         "outputs/orders_log_robo_macro.csv",
+        "outputs/allocation_advisor.csv",
+        "outputs/allocation_advisor_summary.csv",
         "outputs/survival_audit.csv",
+        "outputs/stress_results_v2.csv",
+        "outputs/stress_summary_v2.csv",
+        "outputs/risk_budget.csv",
+        "outputs/risk_budget_summary.csv",
+        "outputs/liquidity_audit.csv",
+        "outputs/liquidity_summary.csv",
+        "outputs/counterparty_audit.csv",
+        "outputs/counterparty_summary.csv",
+        "outputs/ai_audit_summary.csv",
+        "outputs/ai_audit_details.csv",
+        "outputs/openai_audit_summary.csv",
+        "outputs/openai_audit_details.csv",
+        "outputs/openai_audit_report.csv",
     ]
 
     files = []
