@@ -96,7 +96,7 @@ def main():
         openai_audit_context = run_openai_auditor()
     except Exception as e:
         print("====================================================")
-        print("OPENAI AUDITOR FALHOU — EXECUÇÃO CONTINUARÁ")
+        print("NVIDIA NEMOTRON AUDITOR FALHOU — EXECUÇÃO CONTINUARÁ")
         print("====================================================")
         print(e)
         openai_audit_context = {
@@ -184,13 +184,13 @@ def main():
     print(f"AI Root Cause:       {ai_audit['root_cause']}")
 
     print("----------------------------------------------------")
-    print(f"OpenAI Audit:        {openai_audit.get('openai_audit_status', 'NAO_EXECUTADO')}")
-    print(f"OpenAI Verdict:      {openai_audit.get('audit_verdict', 'N/D')}")
-    print(f"OpenAI Score:        {openai_audit.get('audit_score', 'N/D')}")
-    print(f"OpenAI Confidence:   {openai_audit.get('audit_confidence', 'N/D')}")
-    print(f"OpenAI Severity:     {openai_audit.get('severity', 'N/D')}")
-    print(f"OpenAI Root Cause:   {openai_audit.get('root_cause', 'N/D')}")
-    print(f"OpenAI Final Opinion:{openai_audit.get('final_opinion', 'N/D')}")
+    print(f"NVIDIA Audit:        {openai_audit.get('openai_audit_status', 'NAO_EXECUTADO')}")
+    print(f"NVIDIA Verdict:      {openai_audit.get('audit_verdict', 'N/D')}")
+    print(f"NVIDIA Score:        {openai_audit.get('audit_score', 'N/D')}")
+    print(f"NVIDIA Confidence:   {openai_audit.get('audit_confidence', 'N/D')}")
+    print(f"NVIDIA Severity:     {openai_audit.get('severity', 'N/D')}")
+    print(f"NVIDIA Root Cause:   {openai_audit.get('root_cause', 'N/D')}")
+    print(f"NVIDIA Final Opinion:{openai_audit.get('final_opinion', 'N/D')}")
 
     print("====================================================")
     print("Relatórios gerados:")
