@@ -159,14 +159,15 @@ def read_engine(filename):
     return path.read_text(encoding="utf-8", errors="replace")
 
 
-def call_nemotron(prompt, max_tokens, stage="Nemotron"):
+def call_nemotron(prompt, max_tokens, stage="Nemotron", json_mode=False):
     """
     Faz uma chamada protegida ao endpoint NVIDIA.
 
     - timeout por tentativa;
     - sem retries ocultos do SDK;
     - 1 retry controlado;
-    - logs imediatos com duração de cada tentativa.
+    - logs imediatos com duração de cada tentativa;
+    - quando json_mode=True, solicita Structured JSON Output à API.
     """
     last_error = None
 
@@ -179,9 +180,9 @@ def call_nemotron(prompt, max_tokens, stage="Nemotron"):
 
         try:
             client = get_client()
-            response = client.chat.completions.create(
-                model=MODEL,
-                messages=[
+            request_kwargs = {
+                "model": MODEL,
+                "messages": [
                     {
                         "role": "system",
                         "content": (
@@ -193,10 +194,19 @@ def call_nemotron(prompt, max_tokens, stage="Nemotron"):
                     },
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.1,
-                max_tokens=max_tokens,
-                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-            )
+                "temperature": 0.1,
+                "max_tokens": max_tokens,
+                "extra_body": {
+                    "chat_template_kwargs": {
+                        "enable_thinking": False
+                    }
+                },
+            }
+
+            if json_mode:
+                request_kwargs["response_format"] = {"type": "json_object"}
+
+            response = client.chat.completions.create(**request_kwargs)
 
             content = response.choices[0].message.content
             if not content:
@@ -281,6 +291,7 @@ RESPOSTA INVÁLIDA:
             MAX_TOKENS_FACT,
         ),
         stage=f"Reparo JSON: {stage}",
+        json_mode=True,
     )
 
     repaired = extract_json(repaired_text)
@@ -293,7 +304,7 @@ def call_nemotron_json(prompt, max_tokens, stage="Nemotron"):
     Executa a chamada normal e valida o JSON.
     Se a resposta estiver malformada, faz uma única tentativa de reparo sintático.
     """
-    raw_text = call_nemotron(prompt, max_tokens, stage=stage)
+    raw_text = call_nemotron(prompt, max_tokens, stage=stage, json_mode=True)
 
     try:
         return extract_json(raw_text)
