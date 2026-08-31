@@ -34,7 +34,7 @@ jobs:
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
-          python studies/nemotron_robot_auditor.py
+          python -u studies/nemotron_robot_auditor.py
 
       - name: Upload audit reports
         if: always()
