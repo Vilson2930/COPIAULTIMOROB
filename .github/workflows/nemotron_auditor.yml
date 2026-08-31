@@ -1,0 +1,122 @@
+name: NEMOTRON - Auditor Estrutural
+
+on:
+  workflow_dispatch:
+    inputs:
+      motor:
+        description: "Motor Python para auditar"
+        required: true
+        type: choice
+        options:
+          - macro_engine.py
+          - portfolio_engine.py
+          - allocation_advisor.py
+          - operational_risk.py
+          - stress_engine.py
+          - risk_budget_engine.py
+          - liquidity_engine.py
+          - counterparty_engine.py
+          - governance_engine.py
+          - data_engine.py
+
+      operacao:
+        description: "Operacao"
+        required: true
+        default: "AUDITAR"
+        type: choice
+        options:
+          - AUDITAR
+          - TESTAR
+          - AUDITAR_TESTAR
+
+jobs:
+  nemotron-auditor:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    env:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Verify NVIDIA secret
+        shell: bash
+        run: |
+          if [ -z "$NVIDIA_API_KEY" ]; then
+            echo "ERRO: NVIDIA_API_KEY nao configurada."
+            exit 1
+          fi
+
+      - name: Create output directory
+        run: |
+          mkdir -p outputs/structural_audit
+
+      - name: Run Nemotron structural audit
+        if: ${{ inputs.operacao == 'AUDITAR' || inputs.operacao == 'AUDITAR_TESTAR' }}
+        run: |
+          python studies/nemotron_structural_auditor.py "${{ inputs.motor }}"
+
+      - name: Run deterministic tests
+        if: ${{ inputs.operacao == 'TESTAR' || inputs.operacao == 'AUDITAR_TESTAR' }}
+        shell: bash
+        run: |
+          MOTOR="${{ inputs.motor }}"
+
+          case "$MOTOR" in
+
+            macro_engine.py)
+              python -m studies.test_macro_lookahead
+              ;;
+
+            portfolio_engine.py)
+              python -m studies.test_portfolio_conservation
+              ;;
+
+            governance_engine.py)
+              python -m studies.test_governance_failsafe
+              ;;
+
+            counterparty_engine.py)
+              python -m studies.test_counterparty_unknown
+              ;;
+
+            *)
+              echo "Nao existe teste deterministico especifico registrado para $MOTOR."
+              echo "A auditoria estrutural pode ser executada normalmente."
+              ;;
+
+          esac
+
+      - name: Upload Nemotron audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nemotron-audit-${{ inputs.motor }}
+          path: |
+            outputs/structural_audit/
+          if-no-files-found: warn
+
+      - name: Upload test outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nemotron-test-outputs-${{ inputs.motor }}
+          path: |
+            outputs/*.csv
+            outputs/*.json
+            outputs/*.txt
+          if-no-files-found: ignore
