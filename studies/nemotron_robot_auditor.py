@@ -810,8 +810,6 @@ def fact_filter(cross_result, sources):
     return result
 
 def create_markdown(results, cross_result, fact_result, failures):
-    fact_result = fact_result or {}
-
     lines = [
         "# Auditoria Estrutural — Nemotron",
         "",
@@ -1070,57 +1068,17 @@ def run():
     log("FILTRO FINAL DE FATO")
     log("=" * 78)
 
-    fact_result = None
-    fact_filter_error = None
+    fact_result = fact_filter(cross_result, sources)
 
-    try:
-        fact_result = fact_filter(cross_result, sources)
-
-        save_json(
-            OUTPUT_DIR / "robot_fact_filter.json",
-            fact_result,
-        )
-        log("[OK] Filtro final de fato concluído e salvo.")
-
-    except Exception as exc:
-        fact_filter_error = f"{type(exc).__name__}: {exc}"
-
-        save_json(
-            OUTPUT_DIR / "robot_fact_filter_failed.json",
-            {
-                "timestamp_utc": utc_now(),
-                "model": MODEL,
-                "status": "FILTRO_FACTUAL_NAO_CONCLUIDO",
-                "erro": fact_filter_error,
-                "validacao_cruzada_concluida": True,
-                "motores_auditados": [
-                    result.get("arquivo") for result in results
-                ],
-            },
-        )
-
-        log("\n" + "=" * 78)
-        log("FILTRO FINAL DE FATO NÃO CONCLUÍDO")
-        log("=" * 78)
-        log(f"Motivo: {fact_filter_error}")
-        log(
-            "As auditorias individuais e a validação cruzada já concluídas "
-            "serão preservadas."
-        )
-        log(
-            "O relatório final será salvo com status "
-            "CONCLUIDA_SEM_FILTRO_FACTUAL."
-        )
-        log("=" * 78)
+    save_json(
+        OUTPUT_DIR / "robot_fact_filter.json",
+        fact_result,
+    )
+    log("[OK] Filtro final de fato concluído e salvo.")
 
     complete_report = {
         "timestamp_utc": utc_now(),
         "model": MODEL,
-        "status": (
-            "CONCLUIDA"
-            if fact_result is not None
-            else "CONCLUIDA_SEM_FILTRO_FACTUAL"
-        ),
         "motores_planejados": MAIN_ENGINES,
         "motores_auditados": [result.get("arquivo") for result in results],
         "falhas_execucao": failures,
@@ -1131,8 +1089,6 @@ def run():
             for path in sorted(OUTPUT_DIR.glob("robot_cross_validation_part_*.json"))
         ],
         "filtro_factual": fact_result,
-        "filtro_factual_executado": fact_result is not None,
-        "erro_filtro_factual": fact_filter_error,
     }
 
     save_json(
@@ -1147,37 +1103,22 @@ def run():
     )
 
     log("\n" + "=" * 78)
-    log(
-        "AUDITORIA CONCLUÍDA"
-        if fact_result is not None
-        else "AUDITORIA CONCLUÍDA SEM FILTRO FACTUAL"
-    )
+    log("AUDITORIA CONCLUÍDA")
     log("=" * 78)
-
-    fact_safe = fact_result or {}
-    summary = fact_safe.get("resumo_quantitativo", {})
+    summary = fact_result.get("resumo_quantitativo", {})
 
     log(f"Veredito integrado: {cross_result.get('veredito_integrado', 'N/D')}")
     log(f"Score integrado: {cross_result.get('score_integrado', 'N/D')}")
     log(f"Confiança integração: {cross_result.get('confidence', 'N/D')}")
-
-    if fact_result is not None:
-        log(f"Veredito factual: {fact_safe.get('veredito_factual', 'N/D')}")
-        log(f"Confiança factual: {fact_safe.get('confidence', 'N/D')}")
-        log(f"Fatos confirmados: {summary.get('fatos_confirmados', 0)}")
-        log(f"Fatos refutados: {summary.get('fatos_refutados', 0)}")
-        log(f"Evidência insuficiente: {summary.get('evidencia_insuficiente', 0)}")
-        log(f"Filtro factual: {OUTPUT_DIR / 'robot_fact_filter.json'}")
-    else:
-        log("Filtro factual: NÃO CONCLUÍDO")
-        log(
-            f"Registro da falha: "
-            f"{OUTPUT_DIR / 'robot_fact_filter_failed.json'}"
-        )
-
+    log(f"Veredito factual: {fact_result.get('veredito_factual', 'N/D')}")
+    log(f"Confiança factual: {fact_result.get('confidence', 'N/D')}")
+    log(f"Fatos confirmados: {summary.get('fatos_confirmados', 0)}")
+    log(f"Fatos refutados: {summary.get('fatos_refutados', 0)}")
+    log(f"Evidência insuficiente: {summary.get('evidencia_insuficiente', 0)}")
     log(f"Motores auditados: {len(results)}")
     log(f"Falhas de execução: {len(failures)}")
     log(f"Relatório completo: {OUTPUT_DIR / 'robot_audit_complete.json'}")
+    log(f"Filtro factual: {OUTPUT_DIR / 'robot_fact_filter.json'}")
     log(f"Relatório leitura: {OUTPUT_DIR / 'robot_audit_report.md'}")
     log("=" * 78)
 
