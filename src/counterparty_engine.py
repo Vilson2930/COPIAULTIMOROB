@@ -24,16 +24,31 @@ def build_positions_df(rebalance):
         positions_df = positions_df.rename(columns={"index": "ativo"})
 
     if "ativo" not in positions_df.columns:
-        positions_df = positions_df.rename(columns={positions_df.columns[0]: "ativo"})
+        positions_df = positions_df.rename(
+            columns={positions_df.columns[0]: "ativo"}
+        )
 
     required_columns = ["ativo", "valor_atual"]
-    missing = [col for col in required_columns if col not in positions_df.columns]
+    missing = [
+        col for col in required_columns
+        if col not in positions_df.columns
+    ]
 
     if missing:
-        raise ValueError(f"rebalance com colunas ausentes: {missing}")
+        raise ValueError(
+            f"rebalance com colunas ausentes: {missing}"
+        )
 
-    positions_df["ativo"] = positions_df["ativo"].astype(str).str.strip()
-    positions_df["valor_atual"] = positions_df["valor_atual"].astype(float)
+    positions_df["ativo"] = (
+        positions_df["ativo"]
+        .astype(str)
+        .str.strip()
+    )
+
+    positions_df["valor_atual"] = (
+        positions_df["valor_atual"]
+        .astype(float)
+    )
 
     return positions_df
 
@@ -46,6 +61,12 @@ def get_counterparty_map():
     - BTC-USD foi alterado de BINANCE para SELF_CUSTODY.
     - Isso corrige o risco de contraparte/custódia.
     - Isso NÃO altera o risco de mercado do BTC no Risk Budget Engine.
+
+    Regra fail-safe:
+    - Ativo não cadastrado no mapa é tratado como
+      contraparte DESCONHECIDA com score 0.
+    - O objetivo é impedir que ausência de informação
+      seja interpretada como contraparte aceitável.
     """
 
     return {
@@ -92,29 +113,67 @@ def run_counterparty_engine(rebalance):
 
     cp_map = get_counterparty_map()
 
-    positions_df["counterparty"] = positions_df["ativo"].apply(
-        lambda x: cp_map.get(x, ("OUTROS", 75))[0]
+    positions_df["counterparty"] = (
+        positions_df["ativo"].apply(
+            lambda x: cp_map.get(
+                x,
+                ("DESCONHECIDA", 0),
+            )[0]
+        )
     )
 
-    positions_df["counterparty_score"] = positions_df["ativo"].apply(
-        lambda x: cp_map.get(x, ("OUTROS", 75))[1]
+    positions_df["counterparty_score"] = (
+        positions_df["ativo"].apply(
+            lambda x: cp_map.get(
+                x,
+                ("DESCONHECIDA", 0),
+            )[1]
+        )
     )
 
-    total_value = float(positions_df["valor_atual"].sum())
+    positions_df["counterparty_known"] = (
+        positions_df["ativo"].isin(cp_map)
+    )
+
+    unknown_assets = (
+        positions_df.loc[
+            ~positions_df["counterparty_known"],
+            "ativo",
+        ]
+        .drop_duplicates()
+        .tolist()
+    )
+
+    total_value = float(
+        positions_df["valor_atual"].sum()
+    )
 
     if total_value <= 0:
-        raise ValueError("Valor total da carteira inválido para Counterparty Engine.")
+        raise ValueError(
+            "Valor total da carteira inválido para Counterparty Engine."
+        )
 
     counterparty_audit = (
-        positions_df.groupby("counterparty", as_index=False)
+        positions_df
+        .groupby(
+            "counterparty",
+            as_index=False,
+        )
         .agg(
-            exposure_usd=("valor_atual", "sum"),
-            avg_score=("counterparty_score", "mean"),
+            exposure_usd=(
+                "valor_atual",
+                "sum",
+            ),
+            avg_score=(
+                "counterparty_score",
+                "mean",
+            ),
         )
     )
 
     counterparty_audit["exposure_pct"] = (
-        counterparty_audit["exposure_usd"] / total_value
+        counterparty_audit["exposure_usd"]
+        / total_value
     )
 
     counterparty_audit["weighted_score"] = (
@@ -123,38 +182,70 @@ def run_counterparty_engine(rebalance):
     )
 
     counterparty_score = round(
-        float(counterparty_audit["weighted_score"].sum()),
+        float(
+            counterparty_audit[
+                "weighted_score"
+            ].sum()
+        ),
         2,
     )
 
-    counterparty_level = classify_counterparty_score(counterparty_score)
-
-    counterparty_audit = counterparty_audit.sort_values(
-        "exposure_pct",
-        ascending=False,
+    counterparty_level = (
+        classify_counterparty_score(
+            counterparty_score
+        )
     )
 
-    largest_counterparty = str(counterparty_audit.iloc[0]["counterparty"])
+    counterparty_audit = (
+        counterparty_audit.sort_values(
+            "exposure_pct",
+            ascending=False,
+        )
+    )
+
+    largest_counterparty = str(
+        counterparty_audit.iloc[0][
+            "counterparty"
+        ]
+    )
+
     largest_counterparty_exposure_pct = float(
-        counterparty_audit.iloc[0]["exposure_pct"]
+        counterparty_audit.iloc[0][
+            "exposure_pct"
+        ]
     )
 
-    concentration_level = classify_concentration(
-        largest_counterparty_exposure_pct
+    concentration_level = (
+        classify_concentration(
+            largest_counterparty_exposure_pct
+        )
     )
 
     critical_flags = []
 
+    if unknown_assets:
+        critical_flags.append(
+            "CONTRAPARTE_DESCONHECIDA"
+        )
+
     if counterparty_score < 60:
-        critical_flags.append("COUNTERPARTY_SCORE_CRITICO")
+        critical_flags.append(
+            "COUNTERPARTY_SCORE_CRITICO"
+        )
 
     if largest_counterparty_exposure_pct > 0.50:
-        critical_flags.append("CONCENTRACAO_CONTRAPARTE_ACIMA_50")
+        critical_flags.append(
+            "CONCENTRACAO_CONTRAPARTE_ACIMA_50"
+        )
 
     if largest_counterparty_exposure_pct > 0.65:
-        critical_flags.append("CONCENTRACAO_CONTRAPARTE_ACIMA_65")
+        critical_flags.append(
+            "CONCENTRACAO_CONTRAPARTE_ACIMA_65"
+        )
 
-    counterparty_audit["timestamp_utc"] = timestamp_utc
+    counterparty_audit[
+        "timestamp_utc"
+    ] = timestamp_utc
 
     counterparty_summary = pd.DataFrame([{
         "timestamp_utc": timestamp_utc,
@@ -162,11 +253,20 @@ def run_counterparty_engine(rebalance):
         "counterparty_level": counterparty_level,
         "largest_counterparty": largest_counterparty,
         "largest_counterparty_exposure_pct": round(
-            largest_counterparty_exposure_pct * 100,
+            largest_counterparty_exposure_pct
+            * 100,
             2,
         ),
         "concentration_level": concentration_level,
-        "critical_flags": " | ".join(critical_flags),
+        "unknown_assets_count": len(
+            unknown_assets
+        ),
+        "unknown_assets": " | ".join(
+            unknown_assets
+        ),
+        "critical_flags": " | ".join(
+            critical_flags
+        ),
     }])
 
     ensure_outputs_dir()
@@ -187,32 +287,77 @@ def run_counterparty_engine(rebalance):
         index=False,
     )
 
-    print("====================================================")
+    print(
+        "===================================================="
+    )
     print("COUNTERPARTY ENGINE")
-    print("====================================================")
-    print(f"Data UTC:                  {timestamp_utc}")
-    print(f"Counterparty Score:        {counterparty_score}")
-    print(f"Counterparty Level:        {counterparty_level}")
-    print(f"Maior Contraparte:         {largest_counterparty}")
-    print(f"Exposição Maior Contrap.:  {largest_counterparty_exposure_pct:.2%}")
-    print(f"Concentration Level:       {concentration_level}")
+    print(
+        "===================================================="
+    )
+    print(
+        f"Data UTC:                  "
+        f"{timestamp_utc}"
+    )
+    print(
+        f"Counterparty Score:        "
+        f"{counterparty_score}"
+    )
+    print(
+        f"Counterparty Level:        "
+        f"{counterparty_level}"
+    )
+    print(
+        f"Maior Contraparte:         "
+        f"{largest_counterparty}"
+    )
+    print(
+        f"Exposição Maior Contrap.:  "
+        f"{largest_counterparty_exposure_pct:.2%}"
+    )
+    print(
+        f"Concentration Level:       "
+        f"{concentration_level}"
+    )
+
+    if unknown_assets:
+        print(
+            "Ativos sem contraparte:    "
+            + " | ".join(unknown_assets)
+        )
 
     if critical_flags:
-        print(f"Critical Flags:            {' | '.join(critical_flags)}")
+        print(
+            "Critical Flags:            "
+            + " | ".join(critical_flags)
+        )
     else:
-        print("Critical Flags:            Nenhuma")
+        print(
+            "Critical Flags:            Nenhuma"
+        )
 
-    print("----------------------------------------------------")
-    print(counterparty_audit[[
-        "counterparty",
-        "exposure_usd",
-        "avg_score",
-        "exposure_pct",
-        "weighted_score",
-    ]].to_string(index=False))
-    print("====================================================")
+    print(
+        "----------------------------------------------------"
+    )
+
+    print(
+        counterparty_audit[
+            [
+                "counterparty",
+                "exposure_usd",
+                "avg_score",
+                "exposure_pct",
+                "weighted_score",
+            ]
+        ].to_string(index=False)
+    )
+
+    print(
+        "===================================================="
+    )
 
     return {
-        "counterparty_audit": counterparty_audit,
-        "counterparty_summary": counterparty_summary,
+        "counterparty_audit":
+            counterparty_audit,
+        "counterparty_summary":
+            counterparty_summary,
     }
