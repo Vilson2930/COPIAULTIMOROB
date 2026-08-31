@@ -40,6 +40,9 @@ PRECHECK_TIMEOUT_SECONDS = 30
 PRECHECK_MAX_ATTEMPTS = 2
 PRECHECK_RETRY_WAIT_SECONDS = 5
 
+# Se o Nemotron responder com JSON malformado, tenta corrigir somente a sintaxe uma vez.
+JSON_REPAIR_MAX_ATTEMPTS = 1
+
 
 def utc_now():
     return datetime.now(timezone.utc).isoformat()
@@ -242,6 +245,85 @@ def extract_json(text):
         return json.loads(text[start:end + 1])
 
 
+def repair_json_with_nemotron(raw_text, stage="JSON"):
+    """
+    Pede ao Nemotron para corrigir SOMENTE a sintaxe de uma resposta JSON inválida.
+    Não refaz a auditoria e não permite alterar o conteúdo substantivo.
+    """
+    repair_prompt = f"""
+CORREÇÃO ESTRITA DE JSON
+
+A resposta abaixo deveria ser JSON válido, mas contém erro de sintaxe.
+
+REGRAS OBRIGATÓRIAS:
+- corrija SOMENTE a sintaxe JSON;
+- preserve integralmente o conteúdo, valores, conclusões, listas e classificações;
+- não reanalise o código;
+- não acrescente achados;
+- não remova achados;
+- não mude scores;
+- não mude vereditos;
+- não explique nada;
+- retorne SOMENTE o JSON corrigido.
+
+RESPOSTA INVÁLIDA:
+
+{raw_text}
+""".strip()
+
+    log(f"[JSON] {stage} — resposta inválida; solicitando correção sintática.")
+
+    repaired_text = call_nemotron(
+        repair_prompt,
+        max_tokens=max(
+            MAX_TOKENS_INDIVIDUAL,
+            MAX_TOKENS_CROSS,
+            MAX_TOKENS_FACT,
+        ),
+        stage=f"Reparo JSON: {stage}",
+    )
+
+    repaired = extract_json(repaired_text)
+    log(f"[JSON] {stage} — JSON corrigido com sucesso.")
+    return repaired
+
+
+def call_nemotron_json(prompt, max_tokens, stage="Nemotron"):
+    """
+    Executa a chamada normal e valida o JSON.
+    Se a resposta estiver malformada, faz uma única tentativa de reparo sintático.
+    """
+    raw_text = call_nemotron(prompt, max_tokens, stage=stage)
+
+    try:
+        return extract_json(raw_text)
+    except (json.JSONDecodeError, ValueError) as exc:
+        log(
+            f"[JSON] {stage} — JSON inválido: "
+            f"{type(exc).__name__}: {exc}"
+        )
+
+        last_error = exc
+        for attempt in range(1, JSON_REPAIR_MAX_ATTEMPTS + 1):
+            try:
+                log(
+                    f"[JSON] {stage} — tentativa de reparo "
+                    f"{attempt}/{JSON_REPAIR_MAX_ATTEMPTS}"
+                )
+                return repair_json_with_nemotron(raw_text, stage=stage)
+            except Exception as repair_exc:
+                last_error = repair_exc
+                log(
+                    f"[JSON] {stage} — reparo falhou: "
+                    f"{type(repair_exc).__name__}: {repair_exc}"
+                )
+
+        raise RuntimeError(
+            f"{stage} retornou JSON inválido e o reparo automático falhou: "
+            f"{type(last_error).__name__}: {last_error}"
+        )
+
+
 INDIVIDUAL_SCHEMA = {
     "arquivo": "",
     "veredito": "APROVADO | APROVADO_COM_RESSALVAS | REQUER_VALIDACAO | INCONSISTENTE",
@@ -306,12 +388,10 @@ Retorne SOMENTE JSON válido nesta estrutura:
 def audit_engine(filename):
     source_code = read_engine(filename)
     prompt = build_individual_prompt(filename, source_code)
-    result = extract_json(
-        call_nemotron(
-            prompt,
-            MAX_TOKENS_INDIVIDUAL,
-            stage=f"Auditoria individual: {filename}",
-        )
+    result = call_nemotron_json(
+        prompt,
+        MAX_TOKENS_INDIVIDUAL,
+        stage=f"Auditoria individual: {filename}",
     )
     if not isinstance(result, dict):
         raise ValueError("Resultado individual não é um objeto JSON.")
@@ -398,12 +478,10 @@ Retorne SOMENTE JSON válido nesta estrutura:
 
 def cross_validate(results, sources):
     prompt = build_cross_validation_prompt(results, sources)
-    result = extract_json(
-        call_nemotron(
-            prompt,
-            MAX_TOKENS_CROSS,
-            stage="Validação cruzada",
-        )
+    result = call_nemotron_json(
+        prompt,
+        MAX_TOKENS_CROSS,
+        stage="Validação cruzada",
     )
     if not isinstance(result, dict):
         raise ValueError("Resultado cruzado não é um objeto JSON.")
@@ -530,12 +608,10 @@ Retorne SOMENTE JSON válido nesta estrutura:
 
 def fact_filter(cross_result, sources):
     prompt = build_fact_filter_prompt(cross_result, sources)
-    result = extract_json(
-        call_nemotron(
-            prompt,
-            MAX_TOKENS_FACT,
-            stage="Filtro final de fato",
-        )
+    result = call_nemotron_json(
+        prompt,
+        MAX_TOKENS_FACT,
+        stage="Filtro final de fato",
     )
 
     if not isinstance(result, dict):
