@@ -43,6 +43,11 @@ PRECHECK_RETRY_WAIT_SECONDS = 5
 # Se o Nemotron responder com JSON malformado, tenta corrigir somente a sintaxe uma vez.
 JSON_REPAIR_MAX_ATTEMPTS = 1
 
+# Validação cruzada em blocos menores para evitar respostas JSON excessivamente grandes.
+CROSS_GROUP_SIZE = 5
+MAX_TOKENS_CROSS_PART = 7000
+MAX_TOKENS_CROSS_CONSOLIDATION = 7000
+
 
 def utc_now():
     return datetime.now(timezone.utc).isoformat()
@@ -487,17 +492,134 @@ Retorne SOMENTE JSON válido nesta estrutura:
 """.strip()
 
 
-def cross_validate(results, sources):
-    prompt = build_cross_validation_prompt(results, sources)
-    result = call_nemotron_json(
-        prompt,
-        MAX_TOKENS_CROSS,
-        stage="Validação cruzada",
+def build_cross_consolidation_prompt(partial_results, results):
+    schema = json.dumps(CROSS_SCHEMA, ensure_ascii=False, indent=2)
+    partials_json = json.dumps(partial_results, ensure_ascii=False, indent=2)
+    compact_json = json.dumps(
+        [compact_individual_result(result) for result in results],
+        ensure_ascii=False,
+        indent=2,
     )
-    if not isinstance(result, dict):
-        raise ValueError("Resultado cruzado não é um objeto JSON.")
-    return result
 
+    return f"""
+CONSOLIDAÇÃO FINAL DA VALIDAÇÃO CRUZADA DE UM ROBÔ QUANTITATIVO
+
+Você recebeu:
+1. auditorias cruzadas parciais feitas sobre grupos menores de motores;
+2. os resumos das auditorias individuais de todos os motores.
+
+Sua função é CONSOLIDAR, não refazer toda a auditoria.
+
+Objetivos:
+- unir achados equivalentes sem duplicação;
+- preservar achados confirmados sustentados pelas auditorias parciais;
+- identificar conflitos entre os dois grupos;
+- refutar achados quando os resumos individuais ou parciais mostrarem incompatibilidade;
+- manter como validação necessária aquilo que não puder ser comprovado;
+- identificar problemas de integração entre grupos APENAS quando houver evidência nos dados fornecidos;
+- não inventar contratos, chamadas, outputs ou comportamento não mostrado.
+
+Classificações:
+CONFIRMADO_PELA_INTEGRACAO
+REFUTADO_PELA_INTEGRACAO
+MANTIDO_COMO_INCONSISTENCIA_PROVAVEL
+MANTIDO_COMO_REQUER_VALIDACAO
+ESCOLHA_METODOLOGICA
+NOVO_PROBLEMA_DE_INTEGRACAO
+
+REGRAS DE SAÍDA:
+- seja conciso;
+- não repita o mesmo achado em categorias diferentes;
+- cada item deve ser curto e objetivo;
+- não reproduza grandes trechos de código;
+- não ultrapasse 12 itens por lista;
+- prioridade_correcao deve conter somente os pontos realmente prioritários;
+- não altere código.
+
+AUDITORIAS CRUZADAS PARCIAIS:
+{partials_json}
+
+RESUMOS INDIVIDUAIS:
+{compact_json}
+
+Retorne SOMENTE JSON válido nesta estrutura:
+{schema}
+""".strip()
+
+
+def cross_validate(results, sources):
+    """
+    Executa a validação cruzada em grupos menores e depois consolida os resultados.
+    Isso reduz o tamanho de cada resposta JSON e evita perder toda a execução por
+    uma única resposta excessivamente longa.
+    """
+    partial_results = []
+
+    ordered_results = [
+        result for filename in MAIN_ENGINES
+        for result in results
+        if result.get("arquivo") == filename
+    ]
+
+    for start in range(0, len(ordered_results), CROSS_GROUP_SIZE):
+        group_results = ordered_results[start:start + CROSS_GROUP_SIZE]
+        group_files = [result.get("arquivo") for result in group_results]
+        group_sources = {
+            filename: sources[filename]
+            for filename in group_files
+            if filename in sources
+        }
+
+        group_number = (start // CROSS_GROUP_SIZE) + 1
+        total_groups = (len(ordered_results) + CROSS_GROUP_SIZE - 1) // CROSS_GROUP_SIZE
+
+        log(
+            f"[CROSS] Grupo {group_number}/{total_groups}: "
+            f"{', '.join(group_files)}"
+        )
+
+        prompt = build_cross_validation_prompt(group_results, group_sources)
+        partial = call_nemotron_json(
+            prompt,
+            MAX_TOKENS_CROSS_PART,
+            stage=f"Validação cruzada parcial {group_number}/{total_groups}",
+        )
+
+        if not isinstance(partial, dict):
+            raise ValueError(
+                f"Resultado cruzado parcial {group_number} não é um objeto JSON."
+            )
+
+        partial["grupo"] = group_number
+        partial["motores"] = group_files
+        partial_results.append(partial)
+
+        save_json(
+            OUTPUT_DIR / f"robot_cross_validation_part_{group_number}.json",
+            partial,
+        )
+        log(f"[OK] Validação cruzada parcial {group_number} concluída e salva.")
+
+    if not partial_results:
+        raise RuntimeError("Nenhuma validação cruzada parcial foi concluída.")
+
+    log("[CROSS] Consolidando as validações cruzadas parciais.")
+
+    consolidation_prompt = build_cross_consolidation_prompt(
+        partial_results,
+        ordered_results,
+    )
+    consolidated = call_nemotron_json(
+        consolidation_prompt,
+        MAX_TOKENS_CROSS_CONSOLIDATION,
+        stage="Consolidação da validação cruzada",
+    )
+
+    if not isinstance(consolidated, dict):
+        raise ValueError("Resultado cruzado consolidado não é um objeto JSON.")
+
+    consolidated["validacoes_parciais"] = partial_results
+    return consolidated
 
 
 FACT_SCHEMA = {
@@ -759,7 +881,7 @@ def run():
         raise RuntimeError("Nenhuma auditoria individual foi concluída.")
 
     log("\n" + "=" * 78)
-    log("VALIDAÇÃO CRUZADA ENTRE OS MOTORES")
+    log("VALIDAÇÃO CRUZADA ENTRE OS MOTORES — EM BLOCOS")
     log("=" * 78)
 
     cross_result = cross_validate(results, sources)
