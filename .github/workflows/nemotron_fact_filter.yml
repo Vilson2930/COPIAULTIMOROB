@@ -1,1 +1,70 @@
+name: NEMOTRON - Filtro Final de Fato
 
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Run ID da auditoria estrutural anterior"
+        required: true
+        type: string
+
+jobs:
+  fact-filter:
+    runs-on: ubuntu-latest
+
+    permissions:
+      actions: read
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check NVIDIA API key
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          python -c "import os, sys; sys.exit(0 if os.getenv('NVIDIA_API_KEY') else 1)"
+
+      - name: Create audit output directory
+        run: |
+          mkdir -p outputs/nemotron_robot_audit
+
+      - name: Download previous audit artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          gh run download "$RUN_ID" \
+            --repo "${{ github.repository }}" \
+            --name "nemotron-robot-audit" \
+            --dir outputs/nemotron_robot_audit
+
+      - name: Verify previous audit
+        run: |
+          test -f outputs/nemotron_robot_audit/robot_cross_validation.json
+          echo "robot_cross_validation.json encontrado."
+
+      - name: Run only factual filter
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          python -u studies/nemotron_fact_filter_resume.py
+
+      - name: Upload factual filter results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nemotron-fact-filter
+          path: outputs/nemotron_robot_audit/
+          if-no-files-found: warn
