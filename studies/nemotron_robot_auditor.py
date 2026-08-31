@@ -48,6 +48,10 @@ CROSS_GROUP_SIZE = 5
 MAX_TOKENS_CROSS_PART = 7000
 MAX_TOKENS_CROSS_CONSOLIDATION = 7000
 
+# Etapas finais são mais caras; usam mais tentativas e backoff progressivo.
+FINAL_STAGE_MAX_ATTEMPTS = 4
+FINAL_STAGE_RETRY_WAIT_SECONDS = 20
+
 
 def utc_now():
     return datetime.now(timezone.utc).isoformat()
@@ -164,7 +168,14 @@ def read_engine(filename):
     return path.read_text(encoding="utf-8", errors="replace")
 
 
-def call_nemotron(prompt, max_tokens, stage="Nemotron", json_mode=False):
+def call_nemotron(
+    prompt,
+    max_tokens,
+    stage="Nemotron",
+    json_mode=False,
+    max_attempts=None,
+    retry_wait_seconds=None,
+):
     """
     Faz uma chamada protegida ao endpoint NVIDIA.
 
@@ -175,11 +186,13 @@ def call_nemotron(prompt, max_tokens, stage="Nemotron", json_mode=False):
     - quando json_mode=True, solicita Structured JSON Output à API.
     """
     last_error = None
+    attempts = max_attempts or MAX_API_ATTEMPTS
+    retry_wait = RETRY_WAIT_SECONDS if retry_wait_seconds is None else retry_wait_seconds
 
-    for attempt in range(1, MAX_API_ATTEMPTS + 1):
+    for attempt in range(1, attempts + 1):
         started = time.monotonic()
         log(
-            f"[API] {stage} — tentativa {attempt}/{MAX_API_ATTEMPTS} "
+            f"[API] {stage} — tentativa {attempt}/{attempts} "
             f"(timeout {REQUEST_TIMEOUT_SECONDS}s)"
         )
 
@@ -229,12 +242,13 @@ def call_nemotron(prompt, max_tokens, stage="Nemotron", json_mode=False):
                 f"{type(exc).__name__}: {exc}"
             )
 
-            if attempt < MAX_API_ATTEMPTS:
-                log(f"[API] {stage} — nova tentativa em {RETRY_WAIT_SECONDS}s")
-                time.sleep(RETRY_WAIT_SECONDS)
+            if attempt < attempts:
+                wait_now = retry_wait * attempt
+                log(f"[API] {stage} — nova tentativa em {wait_now}s")
+                time.sleep(wait_now)
 
     raise RuntimeError(
-        f"{stage} falhou após {MAX_API_ATTEMPTS} tentativas: "
+        f"{stage} falhou após {attempts} tentativas: "
         f"{type(last_error).__name__}: {last_error}"
     )
 
@@ -304,12 +318,25 @@ RESPOSTA INVÁLIDA:
     return repaired
 
 
-def call_nemotron_json(prompt, max_tokens, stage="Nemotron"):
+def call_nemotron_json(
+    prompt,
+    max_tokens,
+    stage="Nemotron",
+    max_attempts=None,
+    retry_wait_seconds=None,
+):
     """
     Executa a chamada normal e valida o JSON.
     Se a resposta estiver malformada, faz uma única tentativa de reparo sintático.
     """
-    raw_text = call_nemotron(prompt, max_tokens, stage=stage, json_mode=True)
+    raw_text = call_nemotron(
+        prompt,
+        max_tokens,
+        stage=stage,
+        json_mode=True,
+        max_attempts=max_attempts,
+        retry_wait_seconds=retry_wait_seconds,
+    )
 
     try:
         return extract_json(raw_text)
@@ -613,12 +640,15 @@ def cross_validate(results, sources):
         consolidation_prompt,
         MAX_TOKENS_CROSS_CONSOLIDATION,
         stage="Consolidação da validação cruzada",
+        max_attempts=FINAL_STAGE_MAX_ATTEMPTS,
+        retry_wait_seconds=FINAL_STAGE_RETRY_WAIT_SECONDS,
     )
 
     if not isinstance(consolidated, dict):
         raise ValueError("Resultado cruzado consolidado não é um objeto JSON.")
 
-    consolidated["validacoes_parciais"] = partial_results
+    # As validações parciais já foram salvas separadamente.
+    # Não embutir tudo no consolidado reduz o tamanho do prompt do filtro factual.
     return consolidated
 
 
@@ -745,6 +775,8 @@ def fact_filter(cross_result, sources):
         prompt,
         MAX_TOKENS_FACT,
         stage="Filtro final de fato",
+        max_attempts=FINAL_STAGE_MAX_ATTEMPTS,
+        retry_wait_seconds=FINAL_STAGE_RETRY_WAIT_SECONDS,
     )
 
     if not isinstance(result, dict):
@@ -912,6 +944,10 @@ def run():
         "falhas_execucao": failures,
         "auditorias_individuais": results,
         "validacao_cruzada": cross_result,
+        "validacoes_cruzadas_parciais": [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted(OUTPUT_DIR.glob("robot_cross_validation_part_*.json"))
+        ],
         "filtro_factual": fact_result,
     }
 
