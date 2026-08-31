@@ -26,6 +26,7 @@ MAIN_ENGINES = [
 
 MAX_TOKENS_INDIVIDUAL = 8000
 MAX_TOKENS_CROSS = 10000
+MAX_TOKENS_FACT = 10000
 
 
 def utc_now():
@@ -257,7 +258,134 @@ def cross_validate(results, sources):
     return result
 
 
-def create_markdown(results, cross_result, failures):
+
+FACT_SCHEMA = {
+    "veredito_factual": (
+        "SEM_ERROS_FACTUAIS_CONFIRMADOS | "
+        "HA_FATOS_CONFIRMADOS | "
+        "EVIDENCIA_INSUFICIENTE"
+    ),
+    "confidence": 0,
+    "fatos_confirmados": [],
+    "fatos_refutados": [],
+    "evidencia_insuficiente": [],
+    "escolhas_metodologicas": [],
+    "riscos_potenciais_nao_comprovados": [],
+    "prioridade_fatos_confirmados": [],
+    "resumo_quantitativo": {
+        "fatos_confirmados": 0,
+        "fatos_refutados": 0,
+        "evidencia_insuficiente": 0,
+        "escolhas_metodologicas": 0,
+        "riscos_potenciais_nao_comprovados": 0,
+    },
+    "conclusao_factual": "",
+}
+
+
+def build_fact_filter_prompt(cross_result, sources):
+    schema = json.dumps(FACT_SCHEMA, ensure_ascii=False, indent=2)
+    cross_json = json.dumps(cross_result, ensure_ascii=False, indent=2)
+    sources_json = json.dumps(sources, ensure_ascii=False, indent=2)
+
+    return f"""
+FILTRO FINAL DE FATO — AUDITORIA DE ROBÔ QUANTITATIVO
+
+Esta é a terceira e última camada da auditoria.
+
+Sua função NÃO é procurar livremente novos problemas.
+Sua função é julgar os achados que sobreviveram à validação cruzada.
+
+Classifique cada achado em uma destas categorias:
+- FATO_CONFIRMADO
+- FATO_REFUTADO
+- EVIDENCIA_INSUFICIENTE
+- ESCOLHA_METODOLOGICA
+- RISCO_POTENCIAL_NAO_COMPROVADO
+
+REGRA DE PROVA PARA FATO_CONFIRMADO:
+
+Um achado só pode ser classificado como FATO_CONFIRMADO quando existir
+evidência objetiva, direta e verificável no código fornecido.
+
+Para cada FATO_CONFIRMADO, informe:
+1. arquivo;
+2. função, método ou bloco afetado, quando identificável;
+3. trecho ou expressão curta e exata do código;
+4. comportamento observado;
+5. comportamento esperado;
+6. por que esse comportamento esperado é demonstrável pelo próprio código
+   ou pelo contrato entre os motores;
+7. cadeia lógica que prova a divergência;
+8. impacto concreto;
+9. motores ou contratos que confirmam o problema;
+10. nível de confiança.
+
+NÃO classifique como FATO_CONFIRMADO quando:
+- depender de requisito de negócio não fornecido;
+- depender de preferência arquitetural;
+- for apenas possibilidade futura;
+- depender de interpretação subjetiva;
+- houver mais de uma interpretação razoável;
+- não houver comportamento esperado demonstrável;
+- outro motor fornecer explicação válida;
+- depender de teste não executado;
+- depender de dado externo não fornecido;
+- for apenas melhoria de robustez;
+- representar escolha metodológica válida;
+- não houver impacto concreto;
+- a evidência for parcial;
+- a cadeia causal estiver incompleta.
+
+Classifique como FATO_REFUTADO quando:
+- outro motor demonstrar que o comportamento está correto;
+- o contrato entre os motores justificar o comportamento;
+- a acusação original interpretar incorretamente uma variável;
+- a acusação ignorar normalização ou tratamento posterior;
+- a acusação for incompatível com o código fornecido.
+
+Use EVIDENCIA_INSUFICIENTE quando houver suspeita plausível,
+mas não existir prova suficiente para confirmar nem refutar.
+
+Use ESCOLHA_METODOLOGICA quando o código estiver coerente e o ponto
+for apenas uma alternativa de modelagem.
+
+Use RISCO_POTENCIAL_NAO_COMPROVADO quando existir um cenário de risco,
+mas o problema não estiver demonstrado no código atual.
+
+REGRAS GERAIS:
+- não altere código;
+- não gere testes;
+- não invente requisitos;
+- não invente contratos;
+- não invente comportamento externo;
+- não aceite automaticamente os achados da auditoria anterior;
+- julgue cada achado novamente com base no código;
+- se a prova não fechar, rebaixe o achado;
+- na dúvida entre FATO_CONFIRMADO e EVIDENCIA_INSUFICIENTE,
+  use EVIDENCIA_INSUFICIENTE.
+
+VALIDAÇÃO CRUZADA:
+{cross_json}
+
+CÓDIGO DOS MOTORES:
+{sources_json}
+
+Retorne SOMENTE JSON válido nesta estrutura:
+{schema}
+""".strip()
+
+
+def fact_filter(cross_result, sources):
+    prompt = build_fact_filter_prompt(cross_result, sources)
+    result = extract_json(call_nemotron(prompt, MAX_TOKENS_FACT))
+
+    if not isinstance(result, dict):
+        raise ValueError("Resultado do filtro factual não é um objeto JSON.")
+
+    return result
+
+def create_markdown(results, cross_result, fact_result, failures):
     lines = [
         "# Auditoria Estrutural — Nemotron",
         "",
@@ -296,11 +424,31 @@ def create_markdown(results, cross_result, failures):
         "",
         f"**Confiança:** {cross_result.get('confidence', 'N/D')}",
         "",
+        "## Filtro Final de Fato",
+        "",
+        f"**Veredito factual:** {fact_result.get('veredito_factual', 'N/D')}",
+        "",
+        f"**Confiança factual:** {fact_result.get('confidence', 'N/D')}",
+        "",
     ])
 
-    conclusion = cross_result.get("conclusao_final", "")
+    summary = fact_result.get("resumo_quantitativo", {})
+    if summary:
+        lines.extend([
+            f"- Fatos confirmados: {summary.get('fatos_confirmados', 0)}",
+            f"- Fatos refutados: {summary.get('fatos_refutados', 0)}",
+            f"- Evidência insuficiente: {summary.get('evidencia_insuficiente', 0)}",
+            f"- Escolhas metodológicas: {summary.get('escolhas_metodologicas', 0)}",
+            (
+                "- Riscos potenciais não comprovados: "
+                f"{summary.get('riscos_potenciais_nao_comprovados', 0)}"
+            ),
+            "",
+        ])
+
+    conclusion = fact_result.get("conclusao_factual", "")
     if conclusion:
-        lines.extend(["## Conclusão", "", conclusion, ""])
+        lines.extend(["## Conclusão Factual", "", conclusion, ""])
 
     return "\n".join(lines)
 
@@ -362,6 +510,22 @@ def run():
 
     cross_result = cross_validate(results, sources)
 
+    save_json(
+        OUTPUT_DIR / "robot_cross_validation.json",
+        cross_result,
+    )
+
+    print("\n" + "=" * 78)
+    print("FILTRO FINAL DE FATO")
+    print("=" * 78)
+
+    fact_result = fact_filter(cross_result, sources)
+
+    save_json(
+        OUTPUT_DIR / "robot_fact_filter.json",
+        fact_result,
+    )
+
     complete_report = {
         "timestamp_utc": utc_now(),
         "model": MODEL,
@@ -370,6 +534,7 @@ def run():
         "falhas_execucao": failures,
         "auditorias_individuais": results,
         "validacao_cruzada": cross_result,
+        "filtro_factual": fact_result,
     }
 
     save_json(
@@ -377,7 +542,7 @@ def run():
         complete_report,
     )
 
-    markdown = create_markdown(results, cross_result, failures)
+    markdown = create_markdown(results, cross_result, fact_result, failures)
     (OUTPUT_DIR / "robot_audit_report.md").write_text(
         markdown,
         encoding="utf-8",
@@ -386,12 +551,20 @@ def run():
     print("\n" + "=" * 78)
     print("AUDITORIA CONCLUÍDA")
     print("=" * 78)
+    summary = fact_result.get("resumo_quantitativo", {})
+
     print("Veredito integrado:", cross_result.get("veredito_integrado", "N/D"))
     print("Score integrado:", cross_result.get("score_integrado", "N/D"))
-    print("Confiança:", cross_result.get("confidence", "N/D"))
+    print("Confiança integração:", cross_result.get("confidence", "N/D"))
+    print("Veredito factual:", fact_result.get("veredito_factual", "N/D"))
+    print("Confiança factual:", fact_result.get("confidence", "N/D"))
+    print("Fatos confirmados:", summary.get("fatos_confirmados", 0))
+    print("Fatos refutados:", summary.get("fatos_refutados", 0))
+    print("Evidência insuficiente:", summary.get("evidencia_insuficiente", 0))
     print("Motores auditados:", len(results))
     print("Falhas de execução:", len(failures))
     print("Relatório completo:", OUTPUT_DIR / "robot_audit_complete.json")
+    print("Filtro factual:", OUTPUT_DIR / "robot_fact_filter.json")
     print("Relatório leitura:", OUTPUT_DIR / "robot_audit_report.md")
     print("=" * 78)
 
