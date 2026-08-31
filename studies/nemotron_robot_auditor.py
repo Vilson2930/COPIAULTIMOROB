@@ -42,7 +42,7 @@ def utc_now():
 
 def log(message=""):
     """Imprime imediatamente no GitHub Actions, sem buffering."""
-    log(message, flush=True)
+    print(message, flush=True)
 
 
 def get_client():
