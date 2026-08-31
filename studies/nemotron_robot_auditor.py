@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -28,16 +29,33 @@ MAX_TOKENS_INDIVIDUAL = 8000
 MAX_TOKENS_CROSS = 10000
 MAX_TOKENS_FACT = 10000
 
+# Proteção operacional das chamadas à NVIDIA.
+# Cada tentativa tem no máximo 5 minutos e há apenas 1 nova tentativa.
+REQUEST_TIMEOUT_SECONDS = 300
+MAX_API_ATTEMPTS = 2
+RETRY_WAIT_SECONDS = 5
+
 
 def utc_now():
     return datetime.now(timezone.utc).isoformat()
+
+
+def log(message=""):
+    """Imprime imediatamente no GitHub Actions, sem buffering."""
+    log(message, flush=True)
 
 
 def get_client():
     api_key = os.getenv("NVIDIA_API_KEY")
     if not api_key:
         raise RuntimeError("NVIDIA_API_KEY não encontrada.")
-    return OpenAI(api_key=api_key, base_url=BASE_URL)
+
+    return OpenAI(
+        api_key=api_key,
+        base_url=BASE_URL,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+        max_retries=0,
+    )
 
 
 def save_json(path, data):
@@ -55,30 +73,69 @@ def read_engine(filename):
     return path.read_text(encoding="utf-8", errors="replace")
 
 
-def call_nemotron(prompt, max_tokens):
-    client = get_client()
-    response = client.chat.completions.create(
-        model=MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "Você é um auditor técnico sênior de sistemas quantitativos financeiros. "
-                    "Analise código de forma conservadora. Diferencie erro real, inconsistência "
-                    "provável, necessidade de validação e escolha metodológica. Não invente "
-                    "evidências e não altere o código."
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.1,
-        max_tokens=max_tokens,
-        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+def call_nemotron(prompt, max_tokens, stage="Nemotron"):
+    """
+    Faz uma chamada protegida ao endpoint NVIDIA.
+
+    - timeout por tentativa;
+    - sem retries ocultos do SDK;
+    - 1 retry controlado;
+    - logs imediatos com duração de cada tentativa.
+    """
+    last_error = None
+
+    for attempt in range(1, MAX_API_ATTEMPTS + 1):
+        started = time.monotonic()
+        log(
+            f"[API] {stage} — tentativa {attempt}/{MAX_API_ATTEMPTS} "
+            f"(timeout {REQUEST_TIMEOUT_SECONDS}s)"
+        )
+
+        try:
+            client = get_client()
+            response = client.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Você é um auditor técnico sênior de sistemas quantitativos financeiros. "
+                            "Analise código de forma conservadora. Diferencie erro real, inconsistência "
+                            "provável, necessidade de validação e escolha metodológica. Não invente "
+                            "evidências e não altere o código."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.1,
+                max_tokens=max_tokens,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            )
+
+            content = response.choices[0].message.content
+            if not content:
+                raise RuntimeError("Nemotron retornou resposta vazia.")
+
+            elapsed = time.monotonic() - started
+            log(f"[API] {stage} — resposta recebida em {elapsed:.1f}s")
+            return content.strip()
+
+        except Exception as exc:
+            elapsed = time.monotonic() - started
+            last_error = exc
+            log(
+                f"[API] {stage} — falha após {elapsed:.1f}s: "
+                f"{type(exc).__name__}: {exc}"
+            )
+
+            if attempt < MAX_API_ATTEMPTS:
+                log(f"[API] {stage} — nova tentativa em {RETRY_WAIT_SECONDS}s")
+                time.sleep(RETRY_WAIT_SECONDS)
+
+    raise RuntimeError(
+        f"{stage} falhou após {MAX_API_ATTEMPTS} tentativas: "
+        f"{type(last_error).__name__}: {last_error}"
     )
-    content = response.choices[0].message.content
-    if not content:
-        raise RuntimeError("Nemotron retornou resposta vazia.")
-    return content.strip()
 
 
 def extract_json(text):
@@ -166,7 +223,13 @@ Retorne SOMENTE JSON válido nesta estrutura:
 def audit_engine(filename):
     source_code = read_engine(filename)
     prompt = build_individual_prompt(filename, source_code)
-    result = extract_json(call_nemotron(prompt, MAX_TOKENS_INDIVIDUAL))
+    result = extract_json(
+        call_nemotron(
+            prompt,
+            MAX_TOKENS_INDIVIDUAL,
+            stage=f"Auditoria individual: {filename}",
+        )
+    )
     if not isinstance(result, dict):
         raise ValueError("Resultado individual não é um objeto JSON.")
     result["arquivo"] = filename
@@ -252,7 +315,13 @@ Retorne SOMENTE JSON válido nesta estrutura:
 
 def cross_validate(results, sources):
     prompt = build_cross_validation_prompt(results, sources)
-    result = extract_json(call_nemotron(prompt, MAX_TOKENS_CROSS))
+    result = extract_json(
+        call_nemotron(
+            prompt,
+            MAX_TOKENS_CROSS,
+            stage="Validação cruzada",
+        )
+    )
     if not isinstance(result, dict):
         raise ValueError("Resultado cruzado não é um objeto JSON.")
     return result
@@ -378,7 +447,13 @@ Retorne SOMENTE JSON válido nesta estrutura:
 
 def fact_filter(cross_result, sources):
     prompt = build_fact_filter_prompt(cross_result, sources)
-    result = extract_json(call_nemotron(prompt, MAX_TOKENS_FACT))
+    result = extract_json(
+        call_nemotron(
+            prompt,
+            MAX_TOKENS_FACT,
+            stage="Filtro final de fato",
+        )
+    )
 
     if not isinstance(result, dict):
         raise ValueError("Resultado do filtro factual não é um objeto JSON.")
@@ -474,14 +549,15 @@ def run():
     if not existing_engines:
         raise RuntimeError("Nenhum dos motores principais foi encontrado.")
 
-    print("=" * 78)
-    print("NEMOTRON — AUDITORIA DOS PRINCIPAIS MOTORES")
-    print("=" * 78)
-    print(f"Motores encontrados: {len(existing_engines)}")
-    print("=" * 78)
+    log("=" * 78)
+    log("NEMOTRON — AUDITORIA DOS PRINCIPAIS MOTORES")
+    log("=" * 78)
+    log(f"Motores encontrados: {len(existing_engines)}")
+    log("=" * 78)
 
     for index, filename in enumerate(existing_engines, start=1):
-        print(f"\n[{index}/{len(existing_engines)}] Auditando {filename}")
+        log(f"\n[{index}/{len(existing_engines)}] Auditando {filename}")
+        engine_started = time.monotonic()
 
         try:
             sources[filename] = read_engine(filename)
@@ -491,22 +567,27 @@ def run():
                 OUTPUT_DIR / f"{Path(filename).stem}_audit.json",
                 result,
             )
-            print("Veredito:", result.get("veredito", "N/D"))
-            print("Score:", result.get("score_estrutural", "N/D"))
+            elapsed = time.monotonic() - engine_started
+            log(
+                f"[OK] {filename} concluído em {elapsed:.1f}s | "
+                f"veredito={result.get('veredito', 'N/D')} | "
+                f"score={result.get('score_estrutural', 'N/D')}"
+            )
         except Exception as exc:
             failure = {
                 "arquivo": filename,
                 "erro": f"{type(exc).__name__}: {exc}",
             }
             failures.append(failure)
-            print("FALHA:", failure["erro"])
+            elapsed = time.monotonic() - engine_started
+            log(f"[FALHA] {filename} após {elapsed:.1f}s | {failure['erro']}")
 
     if not results:
         raise RuntimeError("Nenhuma auditoria individual foi concluída.")
 
-    print("\n" + "=" * 78)
-    print("VALIDAÇÃO CRUZADA ENTRE OS MOTORES")
-    print("=" * 78)
+    log("\n" + "=" * 78)
+    log("VALIDAÇÃO CRUZADA ENTRE OS MOTORES")
+    log("=" * 78)
 
     cross_result = cross_validate(results, sources)
 
@@ -514,10 +595,11 @@ def run():
         OUTPUT_DIR / "robot_cross_validation.json",
         cross_result,
     )
+    log("[OK] Validação cruzada concluída e salva.")
 
-    print("\n" + "=" * 78)
-    print("FILTRO FINAL DE FATO")
-    print("=" * 78)
+    log("\n" + "=" * 78)
+    log("FILTRO FINAL DE FATO")
+    log("=" * 78)
 
     fact_result = fact_filter(cross_result, sources)
 
@@ -525,6 +607,7 @@ def run():
         OUTPUT_DIR / "robot_fact_filter.json",
         fact_result,
     )
+    log("[OK] Filtro final de fato concluído e salvo.")
 
     complete_report = {
         "timestamp_utc": utc_now(),
@@ -548,36 +631,36 @@ def run():
         encoding="utf-8",
     )
 
-    print("\n" + "=" * 78)
-    print("AUDITORIA CONCLUÍDA")
-    print("=" * 78)
+    log("\n" + "=" * 78)
+    log("AUDITORIA CONCLUÍDA")
+    log("=" * 78)
     summary = fact_result.get("resumo_quantitativo", {})
 
-    print("Veredito integrado:", cross_result.get("veredito_integrado", "N/D"))
-    print("Score integrado:", cross_result.get("score_integrado", "N/D"))
-    print("Confiança integração:", cross_result.get("confidence", "N/D"))
-    print("Veredito factual:", fact_result.get("veredito_factual", "N/D"))
-    print("Confiança factual:", fact_result.get("confidence", "N/D"))
-    print("Fatos confirmados:", summary.get("fatos_confirmados", 0))
-    print("Fatos refutados:", summary.get("fatos_refutados", 0))
-    print("Evidência insuficiente:", summary.get("evidencia_insuficiente", 0))
-    print("Motores auditados:", len(results))
-    print("Falhas de execução:", len(failures))
-    print("Relatório completo:", OUTPUT_DIR / "robot_audit_complete.json")
-    print("Filtro factual:", OUTPUT_DIR / "robot_fact_filter.json")
-    print("Relatório leitura:", OUTPUT_DIR / "robot_audit_report.md")
-    print("=" * 78)
+    log(f"Veredito integrado: {cross_result.get('veredito_integrado', 'N/D')}")
+    log(f"Score integrado: {cross_result.get('score_integrado', 'N/D')}")
+    log(f"Confiança integração: {cross_result.get('confidence', 'N/D')}")
+    log(f"Veredito factual: {fact_result.get('veredito_factual', 'N/D')}")
+    log(f"Confiança factual: {fact_result.get('confidence', 'N/D')}")
+    log(f"Fatos confirmados: {summary.get('fatos_confirmados', 0)}")
+    log(f"Fatos refutados: {summary.get('fatos_refutados', 0)}")
+    log(f"Evidência insuficiente: {summary.get('evidencia_insuficiente', 0)}")
+    log(f"Motores auditados: {len(results)}")
+    log(f"Falhas de execução: {len(failures)}")
+    log(f"Relatório completo: {OUTPUT_DIR / 'robot_audit_complete.json'}")
+    log(f"Filtro factual: {OUTPUT_DIR / 'robot_fact_filter.json'}")
+    log(f"Relatório leitura: {OUTPUT_DIR / 'robot_audit_report.md'}")
+    log("=" * 78)
 
 
 def main():
     try:
         run()
     except Exception as exc:
-        print("\n" + "=" * 78)
-        print("AUDITORIA FALHOU")
-        print("=" * 78)
-        print(f"{type(exc).__name__}: {exc}")
-        print("=" * 78)
+        log("\n" + "=" * 78)
+        log("AUDITORIA FALHOU")
+        log("=" * 78)
+        log(f"{type(exc).__name__}: {exc}")
+        log("=" * 78)
         sys.exit(1)
 
 
