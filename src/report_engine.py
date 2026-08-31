@@ -259,7 +259,7 @@ def build_institutional_report():
     openai_final = first_valid(
         openai_audit.get("final_opinion"),
         openai_audit.get("executive_summary"),
-        default="Parecer final não informado pela auditoria OpenAI.",
+        default="Parecer final não informado pela auditoria NVIDIA Nemotron.",
     )
 
     allocation_score = first_valid(allocation_summary.get("allocation_alignment_score"))
@@ -381,7 +381,7 @@ def build_institutional_report():
         {engine_row("Counterparty Engine", counterparty_level, fmt(counterparty_score))}
         {engine_row("Governance Engine", final_verdict, committee_action)}
         {engine_row("AI Auditor Determinístico", ai_status, fmt(ai_score))}
-        {engine_row("OpenAI Auditor", openai_verdict, fmt(openai_score))}
+        {engine_row("NVIDIA Nemotron Auditor", openai_verdict, fmt(openai_score))}
     </table>
 
     <h2 style="color:#f9fafb;font-size:22px;margin:28px 0 14px 0;">3. Alinhamento da Carteira ao Modelo</h2>
@@ -497,8 +497,8 @@ def build_institutional_report():
     <table style="width:100%;border-spacing:12px;">
         <tr>
             {card("AI Determinística", ai_status, f"Score: {fmt(ai_score)}", status_color(ai_status))}
-            {card("OpenAI Verdict", openai_verdict, f"Status: {openai_status}", status_color(openai_verdict))}
-            {card("OpenAI Score", fmt(openai_score), f"Confiança: {fmt(openai_confidence)}", status_color(openai_verdict))}
+            {card("NVIDIA Verdict", openai_verdict, f"Status: {openai_status}", status_color(openai_verdict))}
+            {card("NVIDIA Score", fmt(openai_score), f"Confiança: {fmt(openai_confidence)}", status_color(openai_verdict))}
         </tr>
     </table>
 
