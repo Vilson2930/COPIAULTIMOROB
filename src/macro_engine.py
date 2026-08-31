@@ -34,10 +34,10 @@ def macro_score(series, inverse=False, window=252):
 def build_scores(fred_data, market_data):
     scores = pd.DataFrame(index=fred_data.index)
 
-    fred_data = fred_data.sort_index().ffill().bfill()
-    market_data = market_data.sort_index().ffill().bfill()
+    fred_data = fred_data.sort_index().ffill()
+    market_data = market_data.sort_index().ffill()
 
-    market_aligned = market_data.reindex(scores.index).ffill().bfill()
+    market_aligned = market_data.reindex(scores.index).ffill()
 
     scores["real_yield_spot"] = macro_score(fred_data["real_yield_10y"], inverse=True)
     scores["real_yield_lag"] = macro_score(fred_data["real_yield_10y"].shift(60), inverse=True)
@@ -108,7 +108,7 @@ def build_scores(fred_data, market_data):
     scores["dxy_value"] = market_aligned["dxy"]
     scores["vix_value"] = market_aligned["vix"]
 
-    return scores.sort_index().ffill().bfill()
+    return scores.sort_index().ffill()
 
 
 def classify_regime(score):
@@ -160,7 +160,7 @@ def build_macro_engine(scores):
     macro_engine["stress"] = scores["stress_score"]
     macro_engine["inflacao"] = scores["inflation_score"]
 
-    macro_engine = macro_engine.ffill().bfill()
+    macro_engine = macro_engine.ffill()
 
     macro_engine["macro_score"] = (
         macro_engine["liquidez"] * 0.45
