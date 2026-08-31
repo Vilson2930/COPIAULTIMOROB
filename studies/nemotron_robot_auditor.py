@@ -35,6 +35,11 @@ REQUEST_TIMEOUT_SECONDS = 300
 MAX_API_ATTEMPTS = 2
 RETRY_WAIT_SECONDS = 5
 
+# Precheck: valida o endpoint antes de iniciar os 10 motores.
+PRECHECK_TIMEOUT_SECONDS = 30
+PRECHECK_MAX_ATTEMPTS = 2
+PRECHECK_RETRY_WAIT_SECONDS = 5
+
 
 def utc_now():
     return datetime.now(timezone.utc).isoformat()
@@ -55,6 +60,84 @@ def get_client():
         base_url=BASE_URL,
         timeout=REQUEST_TIMEOUT_SECONDS,
         max_retries=0,
+    )
+
+
+def precheck_nemotron():
+    """
+    Testa a disponibilidade real do Nemotron antes da auditoria.
+    Não audita código e não altera nenhuma das três camadas.
+    """
+    api_key = os.getenv("NVIDIA_API_KEY")
+    if not api_key:
+        raise RuntimeError("NVIDIA_API_KEY não encontrada.")
+
+    log("=" * 78)
+    log("PRECHECK — NVIDIA / NEMOTRON")
+    log("=" * 78)
+
+    last_error = None
+
+    for attempt in range(1, PRECHECK_MAX_ATTEMPTS + 1):
+        started = time.monotonic()
+        log(
+            f"[PRECHECK] Tentativa {attempt}/{PRECHECK_MAX_ATTEMPTS} "
+            f"(timeout {PRECHECK_TIMEOUT_SECONDS}s)"
+        )
+
+        try:
+            client = OpenAI(
+                api_key=api_key,
+                base_url=BASE_URL,
+                timeout=PRECHECK_TIMEOUT_SECONDS,
+                max_retries=0,
+            )
+
+            response = client.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": "Responda somente com a palavra OK.",
+                    }
+                ],
+                temperature=0,
+                max_tokens=8,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            )
+
+            content = (response.choices[0].message.content or "").strip()
+            if not content:
+                raise RuntimeError("Nemotron retornou resposta vazia no precheck.")
+
+            elapsed = time.monotonic() - started
+            log(
+                f"[PRECHECK] Nemotron disponível — resposta recebida "
+                f"em {elapsed:.1f}s."
+            )
+            log("=" * 78)
+            return True
+
+        except Exception as exc:
+            elapsed = time.monotonic() - started
+            last_error = exc
+            log(
+                f"[PRECHECK] Falha após {elapsed:.1f}s: "
+                f"{type(exc).__name__}: {exc}"
+            )
+
+            if attempt < PRECHECK_MAX_ATTEMPTS:
+                log(
+                    f"[PRECHECK] Nova tentativa em "
+                    f"{PRECHECK_RETRY_WAIT_SECONDS}s."
+                )
+                time.sleep(PRECHECK_RETRY_WAIT_SECONDS)
+
+    log("=" * 78)
+    raise RuntimeError(
+        "PRECHECK FALHOU — NVIDIA/Nemotron indisponível. "
+        "A auditoria dos motores não foi iniciada. "
+        f"Último erro: {type(last_error).__name__}: {last_error}"
     )
 
 
@@ -530,6 +613,9 @@ def create_markdown(results, cross_result, fact_result, failures):
 
 def run():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Regra operacional: só inicia a auditoria se o endpoint responder ao precheck.
+    precheck_nemotron()
 
     results = []
     sources = {}
