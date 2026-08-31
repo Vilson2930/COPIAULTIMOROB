@@ -52,6 +52,10 @@ MAX_TOKENS_CROSS_CONSOLIDATION = 7000
 FINAL_STAGE_MAX_ATTEMPTS = 4
 FINAL_STAGE_RETRY_WAIT_SECONDS = 20
 
+# Segunda passagem exclusiva para motores que falharem na primeira rodada.
+FAILED_ENGINE_SECOND_PASS_ATTEMPTS = 4
+FAILED_ENGINE_SECOND_PASS_RETRY_WAIT_SECONDS = 20
+
 
 def utc_now():
     return datetime.now(timezone.utc).isoformat()
@@ -440,13 +444,20 @@ Retorne SOMENTE JSON válido nesta estrutura:
 """.strip()
 
 
-def audit_engine(filename):
+def audit_engine(
+    filename,
+    max_attempts=None,
+    retry_wait_seconds=None,
+    stage_prefix="Auditoria individual",
+):
     source_code = read_engine(filename)
     prompt = build_individual_prompt(filename, source_code)
     result = call_nemotron_json(
         prompt,
         MAX_TOKENS_INDIVIDUAL,
-        stage=f"Auditoria individual: {filename}",
+        stage=f"{stage_prefix}: {filename}",
+        max_attempts=max_attempts,
+        retry_wait_seconds=retry_wait_seconds,
     )
     if not isinstance(result, dict):
         raise ValueError("Resultado individual não é um objeto JSON.")
@@ -875,6 +886,7 @@ def run():
     results = []
     sources = {}
     failures = []
+    failed_engines = []
     existing_engines = []
 
     for filename in MAIN_ENGINES:
@@ -920,16 +932,130 @@ def run():
                 "erro": f"{type(exc).__name__}: {exc}",
             }
             failures.append(failure)
+            failed_engines.append(filename)
             elapsed = time.monotonic() - engine_started
             log(f"[FALHA] {filename} após {elapsed:.1f}s | {failure['erro']}")
 
     if not results:
         raise RuntimeError("Nenhuma auditoria individual foi concluída.")
 
+    # Segunda passagem: repete SOMENTE os motores que falharam na primeira rodada.
+    if failed_engines:
+        log("\n" + "=" * 78)
+        log("SEGUNDA PASSAGEM — SOMENTE MOTORES COM FALHA")
+        log("=" * 78)
+
+        second_pass_failures = []
+
+        for index, filename in enumerate(failed_engines, start=1):
+            log(f"\n[RETRY {index}/{len(failed_engines)}] Auditando novamente {filename}")
+            engine_started = time.monotonic()
+
+            try:
+                sources[filename] = read_engine(filename)
+                result = audit_engine(
+                    filename,
+                    max_attempts=FAILED_ENGINE_SECOND_PASS_ATTEMPTS,
+                    retry_wait_seconds=FAILED_ENGINE_SECOND_PASS_RETRY_WAIT_SECONDS,
+                    stage_prefix="Segunda passagem",
+                )
+
+                # Evita duplicidade caso exista resultado anterior por qualquer motivo.
+                results = [
+                    item for item in results
+                    if item.get("arquivo") != filename
+                ]
+                results.append(result)
+
+                save_json(
+                    OUTPUT_DIR / f"{Path(filename).stem}_audit.json",
+                    result,
+                )
+
+                # Remove a falha anterior deste motor.
+                failures = [
+                    item for item in failures
+                    if item.get("arquivo") != filename
+                ]
+
+                elapsed = time.monotonic() - engine_started
+                log(
+                    f"[RECUPERADO] {filename} concluído em {elapsed:.1f}s | "
+                    f"veredito={result.get('veredito', 'N/D')} | "
+                    f"score={result.get('score_estrutural', 'N/D')}"
+                )
+
+            except Exception as exc:
+                failure = {
+                    "arquivo": filename,
+                    "erro": f"{type(exc).__name__}: {exc}",
+                }
+                second_pass_failures.append(failure)
+                elapsed = time.monotonic() - engine_started
+                log(
+                    f"[FALHA DEFINITIVA] {filename} após {elapsed:.1f}s | "
+                    f"{failure['erro']}"
+                )
+
+        # Mantém somente falhas realmente não recuperadas.
+        failed_names = {item["arquivo"] for item in second_pass_failures}
+        failures = [
+            item for item in failures
+            if item.get("arquivo") not in set(failed_engines)
+        ] + second_pass_failures
+
+    audited_names = {result.get("arquivo") for result in results}
+    missing_after_second_pass = [
+        filename for filename in existing_engines
+        if filename not in audited_names
+    ]
+
+    if missing_after_second_pass:
+        incomplete_report = {
+            "timestamp_utc": utc_now(),
+            "model": MODEL,
+            "status": "AUDITORIA_INCOMPLETA",
+            "motores_planejados": MAIN_ENGINES,
+            "motores_encontrados": existing_engines,
+            "motores_auditados": sorted(audited_names),
+            "motores_faltantes": missing_after_second_pass,
+            "falhas_execucao": failures,
+            "auditorias_individuais": results,
+            "validacao_cruzada_executada": False,
+            "filtro_factual_executado": False,
+        }
+        save_json(
+            OUTPUT_DIR / "robot_audit_incomplete.json",
+            incomplete_report,
+        )
+
+        log("\n" + "=" * 78)
+        log("AUDITORIA INCOMPLETA — VALIDAÇÃO CRUZADA BLOQUEADA")
+        log("=" * 78)
+        log(
+            "Motores sem auditoria concluída: "
+            + ", ".join(missing_after_second_pass)
+        )
+        log(
+            "A validação cruzada e o filtro factual NÃO serão executados "
+            "com motores ausentes."
+        )
+        log(
+            f"Relatório parcial: "
+            f"{OUTPUT_DIR / 'robot_audit_incomplete.json'}"
+        )
+        log("=" * 78)
+
+        raise RuntimeError(
+            "Auditoria individual incompleta após segunda passagem. "
+            "Validação cruzada bloqueada."
+        )
+
     log("\n" + "=" * 78)
     log("VALIDAÇÃO CRUZADA ENTRE OS MOTORES — EM BLOCOS")
     log("=" * 78)
 
+    log(f"Motores válidos para cruzamento: {len(results)}/{len(existing_engines)}")
     cross_result = cross_validate(results, sources)
 
     save_json(
