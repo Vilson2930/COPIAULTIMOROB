@@ -373,6 +373,38 @@ def extract_optional_score(summary, column, default=100):
         return default
 
 
+def extract_required_score(summary, column):
+    """
+    Extrai score obrigatório em modo fail-safe.
+
+    Retorna:
+    - score numérico quando o dado existe e é válido;
+    - 0.0 e missing=True quando o resumo está ausente, vazio,
+      sem a coluna esperada ou com valor inválido.
+
+    Isso impede que ausência de informação seja tratada
+    como score perfeito dentro da Governança.
+    """
+
+    if summary is None or summary.empty:
+        return 0.0, True
+
+    latest = summary.iloc[-1]
+
+    if column not in latest:
+        return 0.0, True
+
+    try:
+        value = float(latest[column])
+    except Exception:
+        return 0.0, True
+
+    if pd.isna(value):
+        return 0.0, True
+
+    return value, False
+
+
 def extract_optional_text(summary, column, default="N/D"):
     if summary is None or summary.empty:
         return default
@@ -412,10 +444,9 @@ def run_integrated_risk_committee(
     future_liquidity_score = float(liquidity_latest["future_liquidity_score"])
     survival_score = float(survival_latest["survival_score"])
 
-    risk_budget_score = extract_optional_score(
+    risk_budget_score, risk_budget_missing = extract_required_score(
         risk_budget_summary,
         "risk_budget_score",
-        default=100,
     )
 
     risk_budget_level = extract_optional_text(
@@ -436,16 +467,20 @@ def run_integrated_risk_committee(
         default="N/D",
     )
 
-    liquidity_score = extract_optional_score(
+    liquidity_score, liquidity_missing = extract_required_score(
         liquidity_summary,
         "liquidity_score",
-        default=100,
     )
 
-    counterparty_score = extract_optional_score(
+    counterparty_score, counterparty_missing = extract_required_score(
         counterparty_summary,
         "counterparty_score",
-        default=100,
+    )
+
+    required_data_missing = (
+        risk_budget_missing
+        or liquidity_missing
+        or counterparty_missing
     )
 
     survival_kill_switch = bool(survival_latest["survival_kill_switch"])
@@ -473,6 +508,15 @@ def run_integrated_risk_committee(
     )
 
     critical_flags = []
+
+    if risk_budget_missing:
+        critical_flags.append("DATA_MISSING_RISK_BUDGET")
+
+    if liquidity_missing:
+        critical_flags.append("DATA_MISSING_LIQUIDITY")
+
+    if counterparty_missing:
+        critical_flags.append("DATA_MISSING_COUNTERPARTY")
 
     if survival_kill_switch:
         critical_flags.append("SURVIVAL_KILL_SWITCH")
@@ -513,6 +557,7 @@ def run_integrated_risk_committee(
     hard_failure = (
         survival_kill_switch
         or ruin_risk == "ALTO"
+        or required_data_missing
     )
 
     hard_elevated = (
@@ -617,6 +662,10 @@ def run_integrated_risk_committee(
         "top_risk_contribution_pct": top_risk_contribution,
         "liquidity_score": liquidity_score,
         "counterparty_score": counterparty_score,
+        "required_data_missing": required_data_missing,
+        "risk_budget_missing": risk_budget_missing,
+        "liquidity_missing": liquidity_missing,
+        "counterparty_missing": counterparty_missing,
         "integrated_risk_score": integrated_risk_score,
         "integrated_risk_level": integrated_risk_level,
         "committee_action": committee_action,
