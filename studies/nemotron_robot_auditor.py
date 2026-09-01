@@ -36,9 +36,9 @@ MAX_API_ATTEMPTS = 2
 RETRY_WAIT_SECONDS = 5
 
 # Precheck: valida o endpoint antes de iniciar os 10 motores.
-PRECHECK_TIMEOUT_SECONDS = 30
-PRECHECK_MAX_ATTEMPTS = 2
-PRECHECK_RETRY_WAIT_SECONDS = 5
+PRECHECK_TIMEOUT_SECONDS = 60
+PRECHECK_MAX_ATTEMPTS = 5
+PRECHECK_RETRY_WAIT_SECONDS = 10
 
 # Se o Nemotron responder com JSON malformado, tenta corrigir somente a sintaxe uma vez.
 JSON_REPAIR_MAX_ATTEMPTS = 1
@@ -143,11 +143,12 @@ def precheck_nemotron():
             )
 
             if attempt < PRECHECK_MAX_ATTEMPTS:
+                wait_now = PRECHECK_RETRY_WAIT_SECONDS * attempt
                 log(
                     f"[PRECHECK] Nova tentativa em "
-                    f"{PRECHECK_RETRY_WAIT_SECONDS}s."
+                    f"{wait_now}s."
                 )
-                time.sleep(PRECHECK_RETRY_WAIT_SECONDS)
+                time.sleep(wait_now)
 
     log("=" * 78)
     raise RuntimeError(
