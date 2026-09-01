@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "robot_scope": "Portfolio multiativo - auditoria estrutural e de integracao",
+  "principles": [
+    "FATO_CONFIRMADO prova que um comportamento existe no codigo, mas nao prova que seja bug.",
+    "Somente corrigir quando o codigo calcula errado, ignora dado relevante, viola contrato entre motores, aplica regra contraria a metodologia definida ou produz saida inconsistente com essa metodologia.",
+    "Pesos-alvo configurados no portfolio sao decisoes metodologicas deliberadas. Nao classificar peso alto ou concentracao alta como bug por si so.",
+    "Contribuicao de risco elevada de BTC ou de qualquer ativo e diagnostico do Risk Budget, nao defeito, quando a matematica estiver correta.",
+    "Alertas de Stress, Risk Budget, Liquidity, Counterparty ou Governance podem ser corretos mesmo quando severos.",
+    "Um limite generico nao invalida automaticamente um peso-alvo configurado; so tratar como bug se o proprio sistema definir esse limite como hard invariant obrigatorio.",
+    "Fail-safe explicitamente documentado deve ser tratado como regra intencional, salvo contradicao objetiva com contrato superior.",
+    "Comportamento que so seria problema ao adicionar ativos ou alterar contratos futuros deve ser classificado como FRAGILIDADE_FUTURA, nao BUG_REAL atual.",
+    "Comportamento tecnicamente existente, mas sem efeito no universo/pipeline atual, deve ser classificado como NAO_APLICAVEL_NO_PIPELINE_ATUAL.",
+    "Escolhas de janelas, thresholds, haircuts, pesos de score e convencoes de turnover sao QUESTAO_METODOLOGICA quando nao houver contrato objetivo que demonstre erro.",
+    "Nao recomendar alteracao dos pesos da carteira como correcao de software.",
+    "Nao alterar codigo automaticamente.",
+    "Nao gerar nem executar testes automaticamente."
+  ],
+  "bug_real_requires": [
+    "evidencia no codigo atual",
+    "caminho executavel ou relevante",
+    "comportamento objetivamente incorreto",
+    "contrato ou comportamento esperado demonstravel",
+    "impacto real em calculo, integracao, score, flag, decisao ou saida",
+    "segunda revisao adversarial confirmando a prova"
+  ]
+}
