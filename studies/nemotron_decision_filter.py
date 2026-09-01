@@ -687,6 +687,16 @@ def verify_bug_candidates(rows, sources, policy):
         result["classificacao_final"] = final_class
         final_action = result.get("acao_final")
 
+        # Normaliza aliases semânticos de ação retornados pelo modelo.
+        if final_class != "BUG_REAL" and final_action in {
+            "NAO_CORRIGIR_AGORA",
+            "NAO_CORRIGIR",
+            "NÃO_CORRIGIR_AGORA",
+            "NÃO_CORRIGIR",
+        }:
+            final_action = "NAO_CORRIGIR_AUTOMATICAMENTE"
+            result["acao_final"] = final_action
+
         if check == "CONFIRMADO_COM_PROVA":
             if final_class != "BUG_REAL" or final_action != "CORRIGIR":
                 raise ValueError(
