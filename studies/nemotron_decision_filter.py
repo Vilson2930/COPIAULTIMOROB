@@ -32,7 +32,24 @@ DECISION_CLASSES = {
     "REQUER_VALIDACAO",
 }
 
+DECISION_CLASS_ALIASES = {
+    "ESCOLHA_METODOLOGICA": "QUESTAO_METODOLOGICA",
+    "ESCOLHA_METODOLÓGICA": "QUESTAO_METODOLOGICA",
+    "QUESTÃO_METODOLÓGICA": "QUESTAO_METODOLOGICA",
+    "NAO_APLICAVEL": "NAO_APLICAVEL_NO_PIPELINE_ATUAL",
+    "NÃO_APLICÁVEL": "NAO_APLICAVEL_NO_PIPELINE_ATUAL",
+    "RISCO_POTENCIAL_NAO_COMPROVADO": "FRAGILIDADE_FUTURA",
+    "FATO_REFUTADO": "REFUTADO",
+}
+
 NON_BUG_CLASSES = DECISION_CLASSES - {"BUG_REAL"}
+
+
+def normalize_decision_class(value):
+    raw = str(value or "").strip()
+    if raw in DECISION_CLASSES:
+        return raw
+    return DECISION_CLASS_ALIASES.get(raw, raw)
 
 FACT_LISTS = [
     "fatos_confirmados",
@@ -396,7 +413,10 @@ def validate_decision_result(result, block):
             raise ValueError("Resultado individual inválido.")
 
         fid = row.get("finding_id")
-        cls = row.get("classificacao_decisao")
+        cls = normalize_decision_class(
+            row.get("classificacao_decisao")
+        )
+        row["classificacao_decisao"] = cls
         action = row.get("acao")
 
         if fid not in expected:
@@ -404,7 +424,8 @@ def validate_decision_result(result, block):
 
         if cls not in DECISION_CLASSES:
             raise ValueError(
-                f"Classificação inválida em {fid}: {cls}"
+                f"Classificação inválida em {fid}: "
+                f"{row.get('classificacao_decisao')}"
             )
 
         expected_action = (
@@ -660,7 +681,10 @@ def verify_bug_candidates(rows, sources, policy):
             raise ValueError(f"finding_id divergente em {fid}")
 
         check = result.get("verificacao_bug")
-        final_class = result.get("classificacao_final")
+        final_class = normalize_decision_class(
+            result.get("classificacao_final")
+        )
+        result["classificacao_final"] = final_class
         final_action = result.get("acao_final")
 
         if check == "CONFIRMADO_COM_PROVA":
