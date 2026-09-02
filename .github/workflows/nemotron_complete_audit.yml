@@ -9,7 +9,7 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 240
 
     env:
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -46,6 +46,9 @@ jobs:
 
       - name: 3 - Julgamento tecnico final
         run: python -u studies/nemotron_decision_filter.py
+
+      - name: 4 - Validacao final contra metodologia
+        run: python -u studies/nemotron_methodology_validator.py
 
       - name: Upload complete audit artifact
         if: always()
