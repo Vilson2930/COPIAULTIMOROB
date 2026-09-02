@@ -687,13 +687,11 @@ def verify_bug_candidates(rows, sources, policy):
         result["classificacao_final"] = final_class
         final_action = result.get("acao_final")
 
-        # Normaliza aliases semânticos de ação retornados pelo modelo.
-        if final_class != "BUG_REAL" and final_action in {
-            "NAO_CORRIGIR_AGORA",
-            "NAO_CORRIGIR",
-            "NÃO_CORRIGIR_AGORA",
-            "NÃO_CORRIGIR",
-        }:
+        # Para qualquer classe que NÃO seja BUG_REAL, a ação operacional
+        # canônica é sempre não corrigir automaticamente. Isso evita que
+        # sinônimos livres do modelo (MONITORAR, ACOMPANHAR, OBSERVAR,
+        # NAO_CORRIGIR_AGORA etc.) derrubem uma execução já concluída.
+        if final_class != "BUG_REAL":
             final_action = "NAO_CORRIGIR_AUTOMATICAMENTE"
             result["acao_final"] = final_action
 
