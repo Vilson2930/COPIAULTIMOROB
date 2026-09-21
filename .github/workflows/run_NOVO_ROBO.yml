@@ -42,5 +42,5 @@ jobs:
       - name: Upload reports
         uses: actions/upload-artifact@v4
         with:
-          name: robo-macro-reports
+          name: investment-cio-copiaultimorob-output
           path: outputs/
